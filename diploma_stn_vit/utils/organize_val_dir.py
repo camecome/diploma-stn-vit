@@ -5,7 +5,7 @@ from pathlib import Path
 from scipy.io import loadmat
 
 NUM_CLASSES = 1000
-IMAGENET_DIR = Path("~/diploma-stn-vit/imagenet1k")
+IMAGENET_DIR = Path("~/diploma-stn-vit/imagenet1k").expanduser()
 
 val_dir = IMAGENET_DIR / "val"
 
@@ -30,4 +30,4 @@ for i, image in enumerate(val_images):
 
     target_dir = val_dir / wnid
     os.makedirs(target_dir, exist_ok=True)
-    shutil.move(image.name, target_dir / image.name)
+    shutil.move(image, target_dir / image.name)

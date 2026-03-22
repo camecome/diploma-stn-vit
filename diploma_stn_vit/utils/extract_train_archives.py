@@ -1,7 +1,7 @@
 import tarfile
 from pathlib import Path
 
-IMAGENET_DIR = Path("~/diploma-stn-vit/imagenet1k")
+IMAGENET_DIR = Path("~/diploma-stn-vit/imagenet1k").expanduser()
 train_dir = IMAGENET_DIR / "train"
 
 for tar_path in train_dir.glob("*.tar"):
