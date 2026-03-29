@@ -1,0 +1,3 @@
+[submodule "external/ViT-pytorch"]
+	path = external/ViT-pytorch
+	url = https://github.com/jeonsworld/ViT-pytorch.git
