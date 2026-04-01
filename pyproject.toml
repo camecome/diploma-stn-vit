@@ -3,17 +3,11 @@ name = "diploma-stn-vit"
 version = "0.1.0"
 description = ""
 authors = [
-    {name = "CameCome",email = "dim.dimof3@gmail.com"}
+    {name = "vm",email = "krivogub.dd@phystech.edu"}
 ]
 readme = "README.md"
-requires-python = ">=3.13,<3.15"
+requires-python = ">=3.13"
 dependencies = [
-    "scipy (>=1.17.1,<2.0.0)",
-    "torch (>=2.11.0,<3.0.0)",
-    "numpy (>=2.4.3,<3.0.0)",
-    "tqdm (>=4.67.3,<5.0.0)",
-    "tensorboard (>=2.20.0,<3.0.0)",
-    "ml-collections (>=1.1.0,<2.0.0)"
 ]
 
 

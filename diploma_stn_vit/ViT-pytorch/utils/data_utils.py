@@ -10,7 +10,7 @@ from torch.utils.data import (
     SequentialSampler,
 )
 
-from Pathlib import Path
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -21,9 +21,7 @@ def get_loader(args):
 
     transform_train = transforms.Compose(
         [
-            transforms.RandomResizedCrop(
-                (args.img_size, args.img_size), scale=(0.05, 1.0)
-            ),
+            transforms.RandomResizedCrop((args.img_size, args.img_size), scale=(0.05, 1.0)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
         ]
@@ -36,43 +34,25 @@ def get_loader(args):
         ]
     )
 
-    if args.dataset == "cifar10":
-        trainset = datasets.CIFAR10(
-            root="./data", train=True, download=True, transform=transform_train
-        )
-        testset = (
-            datasets.CIFAR10(
-                root="./data", train=False, download=True, transform=transform_test
-            )
-            if args.local_rank in [-1, 0]
-            else None
-        )
+    if args.dataset == "imagenet1k":
+        data_dir = Path("imagenet1k")
 
-    elif args.dataset == "imagenet":
-        data_dir = Path(args.data_path).expanduser()
+        trainset = datasets.ImageFolder(root=data_dir / "train", transform=transform_train)
 
-        trainset = datasets.ImageFolder(
-            root=data_dir / "train", transform=transform_train
-        )
-
-        testset = (
+        valset = (
             datasets.ImageFolder(root=data_dir / "val", transform=transform_test)
             if args.local_rank in [-1, 0]
             else None
         )
-
     else:
         raise ValueError("Unsupported dataset")
+
     if args.local_rank == 0:
         torch.distributed.barrier()
 
-    train_sampler = (
-        RandomSampler(trainset)
-        if args.local_rank == -1
-        else DistributedSampler(trainset)
-    )
+    train_sampler = RandomSampler(trainset) if args.local_rank == -1 else DistributedSampler(trainset)
 
-    test_sampler = SequentialSampler(testset)
+    val_sampler = SequentialSampler(valset)
     train_loader = DataLoader(
         trainset,
         sampler=train_sampler,
@@ -80,16 +60,16 @@ def get_loader(args):
         num_workers=4,
         pin_memory=True,
     )
-    test_loader = (
+    val_loader = (
         DataLoader(
-            testset,
-            sampler=test_sampler,
+            valset,
+            sampler=val_sampler,
             batch_size=args.eval_batch_size,
             num_workers=4,
             pin_memory=True,
         )
-        if testset is not None
+        if valset is not None
         else None
     )
 
-    return train_loader, test_loader
+    return train_loader, val_loader
