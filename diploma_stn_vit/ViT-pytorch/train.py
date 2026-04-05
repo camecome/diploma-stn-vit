@@ -162,7 +162,7 @@ def train(args, model):
     train_loader, val_loader = get_loader(args)
 
     # Prepare optimizer and scheduler
-    optimizer = torch.optim.SGD(model.parameters(), lr=args.learning_rate, momentum=0.9, weight_decay=args.weight_decay)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.learning_rate, betas=(0.9, 0.999), weight_decay=0.1)
 
     t_total = args.epoch_num * len(train_loader)
 

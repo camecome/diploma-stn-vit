@@ -19,9 +19,6 @@ from scipy import ndimage
 
 import models.configs as configs
 
-from .modeling_resnet import ResNetV2
-
-
 logger = logging.getLogger(__name__)
 
 
@@ -122,8 +119,8 @@ class Mlp(nn.Module):
 
 
 class Embeddings(nn.Module):
-    """Construct the embeddings from patch, position embeddings.
-    """
+    """Construct the embeddings from patch, position embeddings."""
+
     def __init__(self, config, img_size, in_channels=3):
         super(Embeddings, self).__init__()
         self.hybrid = None
@@ -140,14 +137,12 @@ class Embeddings(nn.Module):
             self.hybrid = False
 
         if self.hybrid:
-            self.hybrid_model = ResNetV2(block_units=config.resnet.num_layers,
-                                         width_factor=config.resnet.width_factor)
+            self.hybrid_model = ResNetV2(block_units=config.resnet.num_layers, width_factor=config.resnet.width_factor)
             in_channels = self.hybrid_model.width * 16
-        self.patch_embeddings = Conv2d(in_channels=in_channels,
-                                       out_channels=config.hidden_size,
-                                       kernel_size=patch_size,
-                                       stride=patch_size)
-        self.position_embeddings = nn.Parameter(torch.zeros(1, n_patches+1, config.hidden_size))
+        self.patch_embeddings = Conv2d(
+            in_channels=in_channels, out_channels=config.hidden_size, kernel_size=patch_size, stride=patch_size
+        )
+        self.position_embeddings = nn.Parameter(torch.zeros(1, n_patches + 1, config.hidden_size))
         self.cls_token = nn.Parameter(torch.zeros(1, 1, config.hidden_size))
 
         self.dropout = Dropout(config.transformer["dropout_rate"])
@@ -192,10 +187,16 @@ class Block(nn.Module):
     def load_from(self, weights, n_block):
         ROOT = f"Transformer/encoderblock_{n_block}"
         with torch.no_grad():
-            query_weight = np2th(weights[pjoin(ROOT, ATTENTION_Q, "kernel")]).view(self.hidden_size, self.hidden_size).t()
+            query_weight = (
+                np2th(weights[pjoin(ROOT, ATTENTION_Q, "kernel")]).view(self.hidden_size, self.hidden_size).t()
+            )
             key_weight = np2th(weights[pjoin(ROOT, ATTENTION_K, "kernel")]).view(self.hidden_size, self.hidden_size).t()
-            value_weight = np2th(weights[pjoin(ROOT, ATTENTION_V, "kernel")]).view(self.hidden_size, self.hidden_size).t()
-            out_weight = np2th(weights[pjoin(ROOT, ATTENTION_OUT, "kernel")]).view(self.hidden_size, self.hidden_size).t()
+            value_weight = (
+                np2th(weights[pjoin(ROOT, ATTENTION_V, "kernel")]).view(self.hidden_size, self.hidden_size).t()
+            )
+            out_weight = (
+                np2th(weights[pjoin(ROOT, ATTENTION_OUT, "kernel")]).view(self.hidden_size, self.hidden_size).t()
+            )
 
             query_bias = np2th(weights[pjoin(ROOT, ATTENTION_Q, "bias")]).view(-1)
             key_bias = np2th(weights[pjoin(ROOT, ATTENTION_K, "bias")]).view(-1)
@@ -311,7 +312,7 @@ class VisionTransformer(nn.Module):
 
                 gs_old = int(np.sqrt(len(posemb_grid)))
                 gs_new = int(np.sqrt(ntok_new))
-                print('load_pretrained: grid-size from %s to %s' % (gs_old, gs_new))
+                print("load_pretrained: grid-size from %s to %s" % (gs_old, gs_new))
                 posemb_grid = posemb_grid.reshape(gs_old, gs_old, -1)
 
                 zoom = (gs_new / gs_old, gs_new / gs_old, 1)
@@ -325,7 +326,9 @@ class VisionTransformer(nn.Module):
                     unit.load_from(weights, n_block=uname)
 
             if self.transformer.embeddings.hybrid:
-                self.transformer.embeddings.hybrid_model.root.conv.weight.copy_(np2th(weights["conv_root/kernel"], conv=True))
+                self.transformer.embeddings.hybrid_model.root.conv.weight.copy_(
+                    np2th(weights["conv_root/kernel"], conv=True)
+                )
                 gn_weight = np2th(weights["gn_root/scale"]).view(-1)
                 gn_bias = np2th(weights["gn_root/bias"]).view(-1)
                 self.transformer.embeddings.hybrid_model.root.gn.weight.copy_(gn_weight)
@@ -337,11 +340,11 @@ class VisionTransformer(nn.Module):
 
 
 CONFIGS = {
-    'ViT-B_16': configs.get_b16_config(),
-    'ViT-B_32': configs.get_b32_config(),
-    'ViT-L_16': configs.get_l16_config(),
-    'ViT-L_32': configs.get_l32_config(),
-    'ViT-H_14': configs.get_h14_config(),
-    'R50-ViT-B_16': configs.get_r50_b16_config(),
-    'testing': configs.get_testing(),
+    "ViT-B_16": configs.get_b16_config(),
+    "ViT-B_32": configs.get_b32_config(),
+    "ViT-L_16": configs.get_l16_config(),
+    "ViT-L_32": configs.get_l32_config(),
+    "ViT-H_14": configs.get_h14_config(),
+    "R50-ViT-B_16": configs.get_r50_b16_config(),
+    "testing": configs.get_testing(),
 }
