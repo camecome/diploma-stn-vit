@@ -15,7 +15,8 @@ import torch
 
 from tqdm import tqdm
 
-from torch.cuda.amp import autocast, GradScaler
+from torch.amp import autocast
+from torch.cuda.amp import GradScaler
 
 from torch.nn.parallel import DistributedDataParallel as DDP
 
@@ -217,7 +218,7 @@ def valid(args, model, val_loader, opt_step, scheduler):
         batch = tuple(t.to(args.device) for t in batch)
         x, y = batch
         with torch.no_grad():
-            with autocast(enabled=args.fp16):
+            with autocast("cuda", enabled=args.fp16):
                 logits = model(x)[0]
                 eval_loss = loss_fct(logits, y)
 
@@ -251,6 +252,8 @@ def train(args, model):
     args.effective_train_batch_size = args.physical_train_batch_size * args.gradient_accumulation_steps
 
     train_loader, val_loader = get_loader(args)
+    logger.info(f"Train images:                {len(train_loader.dataset)}") # last batch is dropped
+    logger.info(f"Validation images:           {len(val_loader.dataset)}")
     total_opt_step = (len(train_loader) // args.gradient_accumulation_steps) * args.epoch_num
     trainable_params = filter(lambda p: p.requires_grad, model.parameters())
 
@@ -304,7 +307,7 @@ def train(args, model):
         for batch_step, batch in enumerate(epoch_iterator):
             batch = tuple(t.to(args.device) for t in batch)
             x, y = batch
-            with autocast(enabled=args.fp16):
+            with autocast("cuda", enabled=args.fp16):
                 loss = model(x, y)
                 loss /= args.gradient_accumulation_steps
 
@@ -377,7 +380,7 @@ def main():
         default="/workspace/shared/target_dir",
         help="Directory to store validation data.",
     )
-    parser.add_argument("--dataset_path", default="/workspace/imagenet1k", help="Path to dataset folder.")
+    parser.add_argument("--dataset_path", default="/workspace/dev_imagenet1k", help="Path to dataset folder.")
     parser.add_argument(
         "--checkpoint_path",
         type=str,
@@ -388,19 +391,19 @@ def main():
     # main training params
     parser.add_argument(
         "--physical_train_batch_size",
-        default=128,
+        default=256,
         type=int,
         help="Total batch size for training. Effective batch size = physical_train_batch_size * gradient_accumulation_steps.",
     )
     parser.add_argument(
         "--gradient_accumulation_steps",
         type=int,
-        default=4,
+        default=1,
         help="Number of updates steps to accumulate before performing a backward/update pass.",
     )
     parser.add_argument("--eval_batch_size", default=1024, type=int, help="Total batch size for eval.")
-    parser.add_argument("--epoch_num", default=8, type=int, help="Total number of epochs to train the model.")
-    parser.add_argument("--learning_rate", default=0.01, type=float, help="The initial learning rate for SGD.")
+    parser.add_argument("--epoch_num", default=4, type=int, help="Total number of epochs to train the model.")
+    parser.add_argument("--learning_rate", default=0.06, type=float, help="The initial learning rate for SGD.")
 
     # less important hyperparameters that are kept fixed
     parser.add_argument(
