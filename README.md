@@ -65,7 +65,7 @@ After entering the container, activate the virtual environment:
 source vit-env/bin/activate
 ```
 
-Then run the evaluation or testing command, for example:
+Then run the testing command, for example:
 
 ```bash
 python3 diploma_stn_vit/run_testing.py --fp16 ...
