@@ -5,7 +5,6 @@ import logging
 import argparse
 import os
 import time
-import math
 import random
 import numpy as np
 
@@ -61,8 +60,12 @@ def set_seed(args):
         torch.cuda.manual_seed_all(args.seed)
 
 
+def get_lr_str(learning_rate):
+    return f"{learning_rate:.10f}".rstrip("0").rstrip(".").replace(".", "_")
+
+
 def load_last_layers(args, model):
-    logger.info(f"Checkpoint path:             {args.checkpoint_path}")
+    logger.info(f"Checkpoint path:                 {args.checkpoint_path}")
     checkpoint = torch.load(args.checkpoint_path, map_location=args.device, weights_only=False)
 
     trainable_state_dict = checkpoint["model_state_dict"]
@@ -115,8 +118,8 @@ def save_model(args, model, epoch, optimizer, scheduler, accuracy):
         "accuracy": accuracy,
     }
 
-    lr_str = f"{args.learning_rate:.3f}".replace(".", "_")
-    checkpoint_path = Path(args.target_dir) / f"model_lr_{lr_str}_epoch_{epoch}.pth"
+    lr_str = get_lr_str(args.learning_rate)
+    checkpoint_path = Path(args.target_dir) / args.target_subdir / f"model_lr_{lr_str}_epoch_{epoch}.pth"
 
     torch.save(checkpoint, checkpoint_path)
     logger.info(f"Saved checkpoint:            {checkpoint_path}")
@@ -128,8 +131,8 @@ def save_model(args, model, epoch, optimizer, scheduler, accuracy):
 
 def save_val_data(args, epoch, logits, labels):
     logger.info("***** Start saving val data *****")
-    lr_str = f"{args.learning_rate:.3f}".replace(".", "_")
-    val_data_path = Path(args.target_dir) / f"val_data_lr_{lr_str}_epoch_{epoch}.npz"
+    lr_str = get_lr_str(args.learning_rate)
+    val_data_path = Path(args.target_dir) / args.target_subdir / f"val_data_lr_{lr_str}_epoch_{epoch}.npz"
 
     np.savez_compressed(
         val_data_path,
@@ -186,11 +189,11 @@ def setup(args):
         reinitialize_last_block_and_head(model)
 
     model.to(args.device)
-    logger.info(f"Total parameters:            {sum(p.numel() for p in model.parameters()) / 1_000_000:.1f}M")
+    logger.info(f"Total parameters:                {sum(p.numel() for p in model.parameters()) / 1_000_000:.1f}M")
     logger.info(
-        f"Total trainable parameters:  {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1_000_000:.1f}M"
+        f"Total trainable parameters:      {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1_000_000:.1f}M"
     )
-    logger.info(f"Out features:                {model.head.out_features}")
+    logger.info(f"Out features:                    {model.head.out_features}")
 
     return args, model
 
@@ -245,39 +248,66 @@ def valid(args, model, val_loader, opt_step, scheduler):
     return accuracy, all_logits, all_labels
 
 
+def check_if_stop(args, curr_epoch):
+    if args.stop_epoch and curr_epoch + 1 == args.stop_epoch:
+        logger.info(f"Stopping training: reached stop_epoch={args.stop_epoch}")
+        exit(0)
+
+
 def train(args, model):
     if args.local_rank in [-1, 0]:
-        os.makedirs(args.target_dir, exist_ok=True)
+        pth = Path(args.target_dir) / args.target_subdir
+        os.makedirs(pth, exist_ok=True)
 
     args.effective_train_batch_size = args.physical_train_batch_size * args.gradient_accumulation_steps
 
+    logger.info("=" * 80)
+    logger.info("***** Main info *****")
+    logger.info(f"Physical train batch size:       {args.physical_train_batch_size}")
+    logger.info(f"Gradient accumulation steps:     {args.gradient_accumulation_steps}")
+    logger.info(f"Effective train batch size:      {args.effective_train_batch_size}")
+    logger.info(f"Eval batch size:                 {args.eval_batch_size}")
+    logger.info(f"Number of epochs:                {args.epoch_num}")
+    logger.info(f"LR:                              {args.learning_rate}")
+    logger.info(f"Beta1:                           {args.beta1}")
+    logger.info(f"Beta2:                           {args.beta2}")
+    logger.info(f"Number of warmup steps:          {args.warmup_steps}")
+    logger.info(f"Weight decay type:               {args.decay_type}")
+    logger.info(f"WD:                              {args.weight_decay}")
+    logger.info(f"Image size:                      {args.img_size}")
+
     train_loader, val_loader = get_loader(args)
-    logger.info(f"Train images:                {len(train_loader.dataset)}") # last batch is dropped
-    logger.info(f"Validation images:           {len(val_loader.dataset)}")
-    total_opt_step = (len(train_loader) // args.gradient_accumulation_steps) * args.epoch_num
+    logger.info(f"Train images:                    {len(train_loader.dataset)}")  # last batch is dropped
+    logger.info(f"Validation images:               {len(val_loader.dataset)}")
+
+    opt_steps_in_epoch = len(train_loader) // args.gradient_accumulation_steps
+    total_opt_step = opt_steps_in_epoch * args.epoch_num
     trainable_params = filter(lambda p: p.requires_grad, model.parameters())
 
-    optimizer = torch.optim.SGD(
-        trainable_params, lr=args.learning_rate, momentum=args.momentum, weight_decay=args.weight_decay
+    logger.info(f"Optimization steps in epoch:     {opt_steps_in_epoch}")
+    logger.info(f"Total optimization steps:        {total_opt_step}")
+
+    optimizer = torch.optim.AdamW(
+        trainable_params, lr=args.learning_rate, betas=(args.beta1, args.beta2), weight_decay=args.weight_decay
     )
 
     if args.decay_type == "cosine":
         scheduler = WarmupCosineSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=total_opt_step)
     else:
-        raise ValueError("'decay_type' must be cosine")
+        scheduler = WarmupLinearSchedule(optimizer, warmup_steps=args.warmup_steps, t_total=total_opt_step)
 
     best_acc = 0
     opt_step = 0
     start_epoch = 0
 
-    logger.info(f"Total optimization steps:    {total_opt_step}")
     if args.checkpoint_path:
         start_epoch, best_acc = load_additional_info(args, optimizer, scheduler)
         opt_step = start_epoch * (len(train_loader) // args.gradient_accumulation_steps)
         remaining_opt_steps = (args.epoch_num - start_epoch) * (len(train_loader) // args.gradient_accumulation_steps)
-        logger.info(f"Remaining opt steps:         {remaining_opt_steps}")
+        logger.info(f"Remaining opt steps:             {remaining_opt_steps}")
 
-    logger.info(f"Num of validation steps:     {len(val_loader)}")
+    logger.info(f"Num of validation steps:         {len(val_loader)}")
+    logger.info(f"Output directory:                {Path(args.target_dir) / args.target_subdir}")
     logger.info("=" * 80)
     logger.info("\n")
 
@@ -295,6 +325,8 @@ def train(args, model):
     losses = AverageMeter()
 
     for epoch in range(start_epoch, args.epoch_num):
+        check_if_stop(args, epoch)
+
         logger.info(f"***** Epoch [{epoch + 1} / {args.epoch_num}] started *****")
         epoch_start_time = time.time()
         model.train()
@@ -344,7 +376,7 @@ def train(args, model):
         if args.local_rank in [-1, 0]:
             accuracy, logits, labels = valid(args, model, val_loader, opt_step, scheduler)
             if accuracy > best_acc:
-                logger.info(f"New best accuracy:           {best_acc:.5f} -> {accuracy:.5f}")
+                logger.info(f"New best accuracy:               {best_acc:.5f} -> {accuracy:.5f}")
                 best_acc = accuracy
             save_model(args, model, epoch + 1, optimizer, scheduler, accuracy)
             save_val_data(args, epoch + 1, logits, labels)
@@ -352,8 +384,8 @@ def train(args, model):
             model.train()
 
         logger.info(f"***** Epoch [{epoch + 1} / {args.epoch_num}] finished *****")
-        logger.info(f"Epoch time:                  {(time.time() - epoch_start_time):.2f} sec")
-        logger.info(f"Best accuracy:               {best_acc:.5f}")
+        logger.info(f"Epoch time:                      {(time.time() - epoch_start_time):.2f} sec")
+        logger.info(f"Best accuracy:                   {best_acc:.5f}")
         logger.info("\n")
 
         losses.reset()
@@ -364,8 +396,6 @@ def train(args, model):
 
 def main():
     parser = argparse.ArgumentParser()
-
-    parser.add_argument("--name", required=True, help="Name of this run. Used for monitoring.")
 
     # input params
     parser.add_argument(
@@ -387,6 +417,12 @@ def main():
         default=None,
         help="Path to checkpoint to resume training.",
     )
+    parser.add_argument(
+        "--target_subdir",
+        type=str,
+        required=True,
+        help="Subdirectory name for checkpoints, logs, validation data, etc.",
+    )
 
     # main training params
     parser.add_argument(
@@ -401,25 +437,27 @@ def main():
         default=1,
         help="Number of updates steps to accumulate before performing a backward/update pass.",
     )
-    parser.add_argument("--eval_batch_size", default=1024, type=int, help="Total batch size for eval.")
-    parser.add_argument("--epoch_num", default=4, type=int, help="Total number of epochs to train the model.")
-    parser.add_argument("--learning_rate", default=0.06, type=float, help="The initial learning rate for SGD.")
+    parser.add_argument("--eval_batch_size", default=2048, type=int, help="Total batch size for eval.")
+    parser.add_argument("--epoch_num", default=10, type=int, help="Total number of epochs to train the model.")
+    parser.add_argument("--learning_rate", default=0.000005, type=float, help="The initial learning rate for AdamW.")
+    parser.add_argument("--weight_decay", default=0.1, type=float, help="Weight decay for AdamW.")
+    parser.add_argument(
+        "--decay_type", choices=["cosine", "linear"], default="cosine", help="How to decay the learning rate."
+    )
+    parser.add_argument(
+        "--warmup_steps", default=4000, type=int, help="Step of training to perform learning rate warmup for."
+    )
+    parser.add_argument("--stop_epoch", default=None, type=int, help="Stop training after this epoch.")
 
     # less important hyperparameters that are kept fixed
+    parser.add_argument("--beta1", default=0.9, type=float, help="Beta1 for AdamW.")
+    parser.add_argument("--beta2", default=0.999, type=float, help="Beta2 for AdamW.")
     parser.add_argument(
         "--model_type",
         default="ViT-B_16",
         help="Which variant to use.",
     )
-    parser.add_argument("--img_size", default=384, type=int, help="Resolution size.")
-    parser.add_argument("--momentum", default=0.9, type=float, help="Momentum for SGD.")
-    parser.add_argument("--weight_decay", default=0, type=float, help="Weight deay if we apply some.")
-    parser.add_argument(
-        "--decay_type", choices=["cosine", "linear"], default="cosine", help="How to decay the learning rate."
-    )
-    parser.add_argument(
-        "--warmup_steps", default=500, type=int, help="Step of training to perform learning rate warmup for."
-    )
+    parser.add_argument("--img_size", default=224, type=int, help="Resolution size.")
     parser.add_argument("--max_grad_norm", default=1.0, type=float, help="Max gradient norm.")
     parser.add_argument("--local_rank", type=int, default=-1, help="local_rank for distributed training on gpus")
     parser.add_argument("--seed", type=int, default=42, help="random seed for initialization")
@@ -440,7 +478,7 @@ def main():
 
     # Setup logging
     logging.basicConfig(
-        format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
+        format="%(asctime)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
         level=logging.INFO if args.local_rank in [-1, 0] else logging.WARN,
     )
@@ -453,15 +491,6 @@ def main():
     logger.info("{}".format(CONFIGS[args.model_type]))
     logger.info(f"Training parameters %s", args)
     logger.info(3 * "\n")
-
-    logger.info("=" * 80)
-    logger.info("***** Main info *****")
-    logger.info(f"Physical train batch size:   {args.physical_train_batch_size}")
-    logger.info(f"Gradient accumulation steps: {args.gradient_accumulation_steps}")
-    logger.info(f"Effective train batch size:  {args.physical_train_batch_size * args.gradient_accumulation_steps}")
-    logger.info(f"Eval batch size:             {args.eval_batch_size}")
-    logger.info(f"Number of epochs             {args.epoch_num}")
-    logger.info(f"LR:                          {args.learning_rate}")
 
     set_seed(args)
     args, model = setup(args)

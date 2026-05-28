@@ -5,6 +5,7 @@ import argparse
 import logging
 import random
 import numpy as np
+import os
 import torch
 
 from tqdm import tqdm
@@ -48,12 +49,16 @@ def simple_accuracy(preds, labels):
     return (preds == labels).mean()
 
 
-def load_best_checkpoint(args, model):
-    lr_str = f"{args.learning_rate:.3f}".replace(".", "_")
-    checkpoint_path = Path(args.target_dir) / f"model_lr_{lr_str}_epoch_{args.epoch_num}.pth"
+def get_lr_str(learning_rate):
+    return f"{learning_rate:.10f}".rstrip("0").rstrip(".").replace(".", "_")
 
-    logger.info(f"Pretrained path:             {args.pretrained_path}")
-    logger.info(f"Checkpoint path:             {checkpoint_path}")
+
+def load_best_checkpoint(args, model):
+    lr_str = get_lr_str(args.learning_rate)
+    checkpoint_path = Path(args.target_dir) / f"model_lr_{lr_str}_epoch_{args.epoch_num}.pth"  # args.target_subdir /
+
+    logger.info(f"Pretrained path:                 {args.pretrained_path}")
+    logger.info(f"Checkpoint path:                 {checkpoint_path}")
 
     pretrained_state_dict = torch.load(args.pretrained_path, map_location="cpu")
     model.load_state_dict(pretrained_state_dict, strict=True)
@@ -64,9 +69,9 @@ def load_best_checkpoint(args, model):
     model.transformer.encoder.layer[-1].load_state_dict(trainable_state_dict["last_transformer_block"])
     model.head.load_state_dict(trainable_state_dict["classifier_head"])
 
-    logger.info(f"Checkpoint epoch:            {checkpoint.get('epoch')}")
-    logger.info(f"Checkpoint initial LR:       {args.learning_rate:.3f}")
-    logger.info(f"Checkpoint accuracy:         {checkpoint.get('accuracy', 0):.5f}")
+    logger.info(f"Checkpoint epoch:                {checkpoint.get('epoch')}")
+    logger.info(f"Checkpoint initial LR:           {args.learning_rate:.3f}")
+    logger.info(f"Checkpoint accuracy:             {checkpoint.get('accuracy', 0):.5f}")
 
     return model
 
@@ -74,8 +79,8 @@ def load_best_checkpoint(args, model):
 def save_test_data(args, logits, labels):
     logger.info("***** Start saving val data *****")
 
-    lr_str = f"{args.learning_rate:.3f}".replace(".", "_")
-    test_data_path = Path(args.target_dir) / f"test_data_lr_{lr_str}_epoch_{args.epoch_num}.npz"
+    lr_str = get_lr_str(args.learning_rate)
+    test_data_path = Path(args.target_dir) / args.target_subdir / f"test_data_lr_{lr_str}_epoch_{args.epoch_num}.npz"
 
     np.savez_compressed(
         test_data_path,
@@ -83,9 +88,9 @@ def save_test_data(args, logits, labels):
         labels=labels.astype(np.int16),
     )
 
-    logger.info(f"Saved validation data:       {test_data_path}")
+    logger.info(f"Saved validation data:           {test_data_path}")
     metrics_size_mb = test_data_path.stat().st_size / (1024**2)
-    logger.info(f"Val data size:               {metrics_size_mb:.2f} MB")
+    logger.info(f"Val data size:                   {metrics_size_mb:.2f} MB")
     logger.info("***** Val data saved successfully *****")
 
 
@@ -131,8 +136,8 @@ def valid(args, model, val_loader):
 
     logger.info("\n")
     logger.info("***** Validation Results *****")
-    logger.info(f"Valid Loss:                  {eval_losses.avg:.5f}")
-    logger.info(f"Valid Accuracy:              {accuracy:.5f}")
+    logger.info(f"Valid Loss:                      {eval_losses.avg:.5f}")
+    logger.info(f"Valid Accuracy:                  {accuracy:.5f}")
 
     return accuracy, all_logits, all_labels
 
@@ -154,25 +159,42 @@ def main():
         help="Directory to store validation data.",
     )
     parser.add_argument("--dataset_path", default="/workspace/imagenet1k", help="Path to dataset folder.")
-    parser.add_argument("--learning_rate", default=None, required=True, type=float, help="Initial LR for used by best checkpoint.")
-    parser.add_argument("--epoch_num", default=None, required=True, type=int, help="Total number of training epochs used to obtain the best checkpoint.")
+    parser.add_argument(
+        "--learning_rate", default=None, required=True, type=float, help="Initial LR for used by best checkpoint."
+    )
+    parser.add_argument(
+        "--epoch_num",
+        default=None,
+        required=True,
+        type=int,
+        help="Total number of training epochs used to obtain the best checkpoint.",
+    )
 
     # output params
-    parser.add_argument("--save_val_data", action="store_true")
+    parser.add_argument(
+        "--target_subdir",
+        type=str,
+        required=True,
+        help="Subdirectory name for checkpoints, logs, validation data, etc.",
+    )
 
     # these args are expected by get_loader(args)
     parser.add_argument("--physical_train_batch_size", default=128, type=int)
     parser.add_argument("--gradient_accumulation_steps", default=1, type=int)
-    parser.add_argument("--eval_batch_size", default=1024, type=int)
+    parser.add_argument("--eval_batch_size", default=2048, type=int)
 
     parser.add_argument("--model_type", default="ViT-B_16")
-    parser.add_argument("--img_size", default=384, type=int)
+    parser.add_argument("--img_size", default=224, type=int)
     parser.add_argument("--local_rank", type=int, default=-1, help="local_rank for distributed training on gpus")
 
     parser.add_argument("--seed", default=42, type=int)
     parser.add_argument("--fp16", action="store_true")
 
     args = parser.parse_args()
+
+    if args.local_rank in [-1, 0]:
+        pth = Path(args.target_dir) / args.target_subdir
+        os.makedirs(pth, exist_ok=True)
 
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",
@@ -184,9 +206,9 @@ def main():
     args.n_gpu = torch.cuda.device_count()
 
     logger.info("***** Validation setup *****")
-    logger.info(f"Dataset path:                {args.dataset_path}")
-    logger.info(f"Eval batch size:             {args.eval_batch_size}")
-    logger.info(f"FP16:                        {args.fp16}")
+    logger.info(f"Dataset path:                    {args.dataset_path}")
+    logger.info(f"Eval batch size:                 {args.eval_batch_size}")
+    logger.info(f"FP16:                            {args.fp16}")
 
     set_seed(args)
 
@@ -200,16 +222,15 @@ def main():
     model = load_best_checkpoint(args, model)
     model.to(args.device)
 
-    logger.info(f"Total parameters:            {sum(p.numel() for p in model.parameters()) / 1_000_000:.1f}M")
-    logger.info(f"Out features:                {model.head.out_features}")
+    logger.info(f"Total parameters:                {sum(p.numel() for p in model.parameters()) / 1_000_000:.1f}M")
+    logger.info(f"Out features:                    {model.head.out_features}")
+    logger.info(f"Output directory:                {Path(args.target_dir) / args.target_subdir}")
 
     _, val_loader = get_loader(args)
 
     _, logits, labels = valid(args, model, val_loader)
 
-    if args.save_val_data:
-        save_test_data(args, logits, labels)
-
+    save_test_data(args, logits, labels)
 
 
 if __name__ == "__main__":
