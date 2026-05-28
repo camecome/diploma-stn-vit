@@ -68,7 +68,7 @@ source vit-env/bin/activate
 Then run the evaluation or testing command, for example:
 
 ```bash
-python3 diploma_stn_vit/train.py --fp16 ...
+python3 diploma_stn_vit/run_testing.py --fp16 ...
 ```
 
 The `shared` directory is mounted into the container and can be used to store checkpoints, logs, plots, and other experiment artifacts that should remain available on the host machine.
