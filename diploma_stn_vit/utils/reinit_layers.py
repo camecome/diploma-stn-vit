@@ -6,7 +6,7 @@ import torch.nn as nn
 from models.modeling import VisionTransformer, CONFIGS
 
 NUM_CLASSES = 1000
-FINE_TUNE_IMG_SIZE = 384
+IMG_SIZE = 224
 
 
 def reset_head_to_zero(model: nn.Module, num_classes: int = NUM_CLASSES):
@@ -24,17 +24,17 @@ def convert_npz_to_pth(npz_path: str, pth_path: str, model_type: str = "ViT-B_16
     config = CONFIGS[model_type]
     config.num_classes = NUM_CLASSES
 
-    model = VisionTransformer(config, img_size=FINE_TUNE_IMG_SIZE, num_classes=NUM_CLASSES, zero_head=True)
+    model = VisionTransformer(config, img_size=IMG_SIZE, num_classes=NUM_CLASSES, zero_head=True)
 
     weights = np.load(npz_path)
     model.load_from(weights)
 
-    reset_head_to_zero(model, num_classes=NUM_CLASSES)
+    # reset_head_to_zero(model, num_classes=NUM_CLASSES)
 
     torch.save(model.state_dict(), pth_path)
 
     print(f"Saved: {pth_path}")
-    print(model.head)
+    # print(model.head)
     print("head.weight sum:", model.head.weight.sum().item())
     print("head.bias sum:", model.head.bias.sum().item())
 

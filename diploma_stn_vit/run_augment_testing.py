@@ -5,7 +5,6 @@ import argparse
 import logging
 import random
 import numpy as np
-import os
 import torch
 
 from tqdm import tqdm
@@ -140,8 +139,8 @@ def valid(args, model, val_loader):
 
     logger.info("\n")
     logger.info("***** Testing Results *****")
-    logger.info(f"Test Loss:                      {eval_losses.avg:.5f}")
-    logger.info(f"Test Accuracy:                  {accuracy:.5f}")
+    logger.info(f"Test loss:                      {eval_losses.avg:.5f}")
+    logger.info(f"Test accuracy:                  {accuracy:.5f}")
 
     return accuracy, all_logits, all_labels
 
@@ -194,10 +193,6 @@ def main():
     parser.add_argument("--fp16", action="store_true")
 
     args = parser.parse_args()
-
-    if args.local_rank in [-1, 0]:
-        pth = Path(args.target_dir) / args.target_subdir
-        os.makedirs(pth, exist_ok=True)
 
     logging.basicConfig(
         format="%(asctime)s - %(levelname)s - %(name)s - %(message)s",

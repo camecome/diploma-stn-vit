@@ -1,9 +1,10 @@
 import logging
 
-import math
-import torch
-
 from torchvision import transforms, datasets
+
+
+from utils.augment_data_utils import get_safe_rotation_size
+
 from torch.utils.data import (
     DataLoader,
     RandomSampler,
@@ -15,11 +16,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
-def get_safe_rotation_size(img_size, max_rotation_degrees):
-    angle = math.radians(abs(max_rotation_degrees))
-    return math.ceil(img_size * (math.cos(angle) + math.sin(angle)))
-
-
+# loader for rotated train and fixed eval/test
 def get_loader(args):
     if args.max_rotation_degrees is not None:
         safe_size = get_safe_rotation_size(args.img_size, args.max_rotation_degrees)
@@ -62,8 +59,8 @@ def get_loader(args):
     trainset = datasets.ImageFolder(root=data_dir / "train", transform=transform_train)
     testset = datasets.ImageFolder(root=data_dir / "val", transform=transform_test)
 
-    train_sampler = RandomSampler(trainset) # shuffle indexes
-    test_sampler = SequentialSampler(testset) # get indexes one by one w/o shuffle
+    train_sampler = RandomSampler(trainset)  # shuffle indexes
+    test_sampler = SequentialSampler(testset)  # get indexes one by one w/o shuffle
 
     train_loader = DataLoader(
         trainset,
@@ -72,14 +69,12 @@ def get_loader(args):
         num_workers=16,
         pin_memory=True,
     )
-    test_loader = (
-        DataLoader(
-            testset,
-            sampler=test_sampler,
-            batch_size=args.eval_batch_size,
-            num_workers=8,
-            pin_memory=True,
-        )
+    test_loader = DataLoader(
+        testset,
+        sampler=test_sampler,
+        batch_size=args.eval_batch_size,
+        num_workers=8,
+        pin_memory=True,
     )
 
     return train_loader, test_loader

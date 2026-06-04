@@ -255,9 +255,8 @@ def check_if_stop(args, curr_epoch):
 
 
 def train(args, model):
-    if args.local_rank in [-1, 0]:
-        pth = Path(args.target_dir) / args.target_subdir
-        os.makedirs(pth, exist_ok=True)
+    pth = Path(args.target_dir) / args.target_subdir
+    os.makedirs(pth, exist_ok=True)
 
     args.effective_train_batch_size = args.physical_train_batch_size * args.gradient_accumulation_steps
 
@@ -314,10 +313,6 @@ def train(args, model):
     logger.info("\n")
 
     scaler = GradScaler(enabled=args.fp16)
-
-    # Distributed training
-    if args.local_rank != -1:
-        model = DDP(model, message_size=250000000, gradient_predivide_factor=get_world_size())
 
     # Train!
     logger.info(f"***** Running training *****")
@@ -394,7 +389,7 @@ def train(args, model):
 
         losses.reset()
 
-    logger.info(f"Best Accuracy: {best_acc:.5f}")
+    logger.info(f"Best Accuracy:                   {best_acc:.5f}")
     logger.info(f"Best epoch:                      {best_epoch}")
     logger.info("***** End training! *****")
 

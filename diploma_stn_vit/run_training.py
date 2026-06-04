@@ -177,9 +177,6 @@ def reinitialize_last_block_and_head(model):
 def setup(args):
     model = VisionTransformer(CONFIGS[args.model_type], args.img_size, zero_head=True, num_classes=1000)
 
-    if not args.pretrained_path:
-        raise ValueError("'pretrained_path' must be provided.")
-
     state_dict = torch.load(args.pretrained_path, map_location="cpu")
     model.load_state_dict(state_dict, strict=True)
 
