@@ -112,7 +112,7 @@ def freeze_stn_vit_common_layers(stn_vit):
 
 
 def setup(args):
-    base_vit = VisionTransformer(CONFIGS[args.model_type], args.img_size, zero_head=True, num_classes=1000)
+    base_vit = VisionTransformer(CONFIGS[args.model_type], num_classes=1000, img_size=args.img_size, zero_head=True)
 
     # load common layers
     load_vit(args, base_vit)
@@ -461,7 +461,7 @@ def main():
     parser.add_argument(
         "--vit_last_layers_checkpoint",
         type=str,
-        default="/workspace/shared/target_dir/lr_0001/model_lr_0_001_epoch_9.pth",
+        default="/workspace/shared/target_dir/lr_0_001/model_lr_0_001_epoch_9.pth",
         help="Where to search for reference branch layers",
     )
 
