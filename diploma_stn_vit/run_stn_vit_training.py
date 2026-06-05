@@ -508,8 +508,8 @@ def main():
     # loss params
     parser.add_argument("--loss_w_1", default=1.0, type=float)
     parser.add_argument("--loss_w_2", default=1.0, type=float)
-    parser.add_argument("--loss_w_f", default=1.0, type=float)
-    parser.add_argument("--loss_w_l", default=1.0, type=float)
+    parser.add_argument("--loss_w_f", default=0.1, type=float)
+    parser.add_argument("--loss_w_l", default=0.1, type=float)
     parser.add_argument("--loss_w_affine", default=1.0, type=float)
     parser.add_argument("--loss_detach_reference", action="store_true")
     parser.add_argument(
