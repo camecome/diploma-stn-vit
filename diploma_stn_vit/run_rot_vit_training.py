@@ -65,27 +65,27 @@ def load_additional_info(args, optimizer, scheduler):
     checkpoint = torch.load(args.checkpoint_path, map_location=args.device, weights_only=False)
 
     start_epoch = checkpoint.get("epoch", 0) + 1
-    if start_epoch == args.epoch_num:
+    if start_epoch >= args.epoch_num:
         raise ValueError("Checkpoint already reached the target number of epochs. " "Nothing to resume.")
 
-    best_acc = checkpoint.get("accuracy", 0.0)
+    best_accuracy = checkpoint.get("best_accuracy", 0.0)
 
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
 
     logger.info(f"Start epoch:                     {start_epoch}")
-    logger.info(f"Best accuracy:                   {best_acc:.5f}")
+    logger.info(f"Best accuracy:                   {best_accuracy:.5f}")
 
-    return start_epoch, best_acc
+    return start_epoch, best_accuracy
 
 
-def save_model(args, model, epoch, best_epoch, optimizer, scheduler, accuracy):
+def save_model(args, model, epoch, best_epoch, optimizer, scheduler, best_accuracy):
     logger.info("***** Start saving checkpoint *****")
 
     model_to_save = model.module if hasattr(model, "module") else model
 
     trainable_state_dict = {
-        "last_transformer_block": model_to_save.base_vit.trandformer.encoder.layer[-1].state_dict(),
+        "last_transformer_block": model_to_save.base_vit.transformer.encoder.layer[-1].state_dict(),
         "classifier_head": model_to_save.base_vit.head.state_dict(),
     }
 
@@ -95,7 +95,7 @@ def save_model(args, model, epoch, best_epoch, optimizer, scheduler, accuracy):
         "scheduler_state_dict": scheduler.state_dict(),
         "epoch": epoch,
         "best_epoch": best_epoch,
-        "accuracy": accuracy,
+        "best_accuracy": best_accuracy,
         "max_rotation_degrees": args.max_rotation_degrees,
         "loss_weights": {
             "w_1": args.w_1,
@@ -129,7 +129,7 @@ def freeze_rot_vit_common_layers(rot_vit):
     for param in rot_vit.base_vit.parameters():
         param.requires_grad = False
 
-    for param in rot_vit.base_vit.trandformer.encoder.layer[-1].parameters():
+    for param in rot_vit.base_vit.transformer.encoder.layer[-1].parameters():
         param.requires_grad = True
 
     for param in rot_vit.base_vit.head.parameters():
@@ -152,7 +152,7 @@ def load_vit(args, base_vit):
 
     last_layers_checkpoint = torch.load(args.vit_last_layers_checkpoint, map_location="cpu", weights_only=False)
     last_layers = last_layers_checkpoint["model_state_dict"]
-    base_vit.trandformer.encoder.layer[-1].load_state_dict(last_layers["last_transformer_block"])
+    base_vit.transformer.encoder.layer[-1].load_state_dict(last_layers["last_transformer_block"])
     base_vit.head.load_state_dict(last_layers["classifier_head"])
     logger.info("***** Common ViT layers succesfully downloaded *****")
 
@@ -185,10 +185,9 @@ def setup(args):
 
 
 def valid(args, model, val_loader, opt_step, scheduler):
-    eval_losses = AverageMeter()
-
     logger.info(f"***** Running validation after optimization step {opt_step} *****")
 
+    eval_losses = AverageMeter()
     current_lr = scheduler.get_last_lr()[0]
     logger.info(f"Current LR:                      {current_lr:.8f}")
 
@@ -380,7 +379,7 @@ def train(args, model):
             logger.info(f"New best accuracy:               " f"{best_acc:.5f} -> {accuracy:.5f}")
             best_acc = accuracy
             best_epoch = epoch
-        save_model(args, model, epoch, best_epoch, optimizer, scheduler, accuracy)
+        save_model(args, model, epoch, best_epoch, optimizer, scheduler, best_acc)
         save_val_data(args, epoch, logits, labels)
         model.train()
 
