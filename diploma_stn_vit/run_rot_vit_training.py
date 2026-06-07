@@ -85,7 +85,7 @@ def save_model(args, model, epoch, best_epoch, optimizer, scheduler, accuracy):
     model_to_save = model.module if hasattr(model, "module") else model
 
     trainable_state_dict = {
-        "last_transformer_block": model_to_save.base_vit.encoder.layer[-1].state_dict(),
+        "last_transformer_block": model_to_save.base_vit.trandformer.encoder.layer[-1].state_dict(),
         "classifier_head": model_to_save.base_vit.head.state_dict(),
     }
 
@@ -129,7 +129,7 @@ def freeze_rot_vit_common_layers(rot_vit):
     for param in rot_vit.base_vit.parameters():
         param.requires_grad = False
 
-    for param in rot_vit.base_vit.encoder.layer[-1].parameters():
+    for param in rot_vit.base_vit.trandformer.encoder.layer[-1].parameters():
         param.requires_grad = True
 
     for param in rot_vit.base_vit.head.parameters():
@@ -152,7 +152,7 @@ def load_vit(args, base_vit):
 
     last_layers_checkpoint = torch.load(args.vit_last_layers_checkpoint, map_location="cpu", weights_only=False)
     last_layers = last_layers_checkpoint["model_state_dict"]
-    base_vit.encoder.layer[-1].load_state_dict(last_layers["last_transformer_block"])
+    base_vit.trandformer.encoder.layer[-1].load_state_dict(last_layers["last_transformer_block"])
     base_vit.head.load_state_dict(last_layers["classifier_head"])
     logger.info("***** Common ViT layers succesfully downloaded *****")
 
