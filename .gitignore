@@ -4,3 +4,5 @@ imagenet1k
 __pycache__
 *.npz
 *.pth
+*.sh
+*.ipynb

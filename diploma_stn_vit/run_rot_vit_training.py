@@ -203,7 +203,7 @@ def valid(args, model, val_loader, opt_step, scheduler):
 
     eval_losses = AverageMeter()
     current_lr = scheduler.get_last_lr()[0]
-    logger.info(f"Current LR:                      {current_lr:.8f}")
+    logger.info(f"Current LR:                           {current_lr:.8f}")
 
     model.eval()
     all_preds = []
@@ -245,8 +245,8 @@ def valid(args, model, val_loader, opt_step, scheduler):
 
     logger.info("")
     logger.info("***** Validation Results *****")
-    logger.info(f"Valid Loss:                      {eval_losses.avg:.5f}")
-    logger.info(f"Valid Accuracy:                  {accuracy:.5f}")
+    logger.info(f"Valid Loss:                           {eval_losses.avg:.5f}")
+    logger.info(f"Valid Accuracy:                       {accuracy:.5f}")
 
     return accuracy, all_logits, all_labels
 
@@ -378,7 +378,7 @@ def train(args, model):
                 optimizer.zero_grad(set_to_none=True)
                 opt_step += 1
                 epoch_iterator.set_description(
-                    f"Training ({opt_step} / {opt_steps_in_epoch} steps) "
+                    f"Training ({opt_step} / {total_opt_step} steps) "
                     f"(loss={losses.val:.5f}, "
                     f"ce1={ce_1_meter.val:.4f}, "
                     f"ce2={ce_2_meter.val:.4f}, "
@@ -400,14 +400,7 @@ def train(args, model):
         logger.info(f"***** Epoch [{epoch} / {args.epoch_num}] finished *****")
         logger.info(f"Epoch time:                           {(time.time() - epoch_start_time):.2f} sec")
         logger.info(f"Best accuracy:                        {best_acc:.5f}")
-        logger.info("")
-        logger.info("Epoch train losses:")
-        logger.info(f"  loss avg:                           {losses.avg:.5f}")
-        logger.info(f"  ce_1 avg:                           {ce_1_meter.avg:.5f}")
-        logger.info(f"  ce_2 avg:                           {ce_2_meter.avg:.5f}")
-        logger.info(f"  features_l1 avg:                    {features_l1_meter.avg:.5f}")
-        logger.info(f"  logits_l1 avg:                      {logits_l1_meter.avg:.5f}")
-        logger.info("")
+        logger.info("\n")
 
         losses.reset()
         ce_1_meter.reset()
@@ -415,6 +408,7 @@ def train(args, model):
         features_l1_meter.reset()
         logits_l1_meter.reset()
 
+    logger.info(f"Best Epoch:                           {best_epoch}")
     logger.info(f"Best Accuracy:                        {best_acc:.5f}")
     logger.info("***** End training! *****")
 

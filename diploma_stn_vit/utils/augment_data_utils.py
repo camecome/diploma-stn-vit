@@ -61,7 +61,7 @@ def get_loader(args):
     if args.max_rotation_degrees is None or args.max_rotation_degrees < 0:
         raise ValueError("max_rotation_degrees must be a non-negative value and cannot be None.")
 
-    safe_size = get_safe_rotation_size(args.img_size, args.max_rotation_degrees)
+    # safe_size = get_safe_rotation_size(args.img_size, args.max_rotation_degrees)
 
     transform_train = transforms.Compose(
         [

@@ -503,7 +503,6 @@ def main():
     parser.add_argument(
         "--warmup_steps", default=2000, type=int, help="Step of training to perform learning rate warmup for."
     )
-    # parser.add_argument("--stop_epoch", default=None, type=int, help="Stop training after this epoch.")
 
     # loss params
     parser.add_argument("--loss_w_1", default=1.0, type=float)
@@ -534,11 +533,9 @@ def main():
 
     args = parser.parse_args()
 
-    # Setup CUDA, GPU & distributed training
     args.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     args.n_gpu = torch.cuda.device_count()
 
-    # Setup logging
     logging.basicConfig(
         format="%(asctime)s - %(message)s",
         datefmt="%m/%d/%Y %H:%M:%S",
