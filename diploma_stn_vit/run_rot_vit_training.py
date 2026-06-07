@@ -437,7 +437,7 @@ def main():
     )
     parser.add_argument(
         "--physical_train_batch_size",
-        default=256,
+        default=512,
         type=int,
         help="Physical batch size for training. Effective batch size = physical_train_batch_size * gradient_accumulation_steps.",
     )
@@ -449,12 +449,12 @@ def main():
     )
     parser.add_argument("--eval_batch_size", default=2048, type=int, help="Batch size for evaluation.")
     parser.add_argument("--epoch_num", default=10, type=int, help="Total number of epochs to train.")
-    parser.add_argument("--learning_rate", default=0.000005, type=float, help="Initial learning rate for AdamW.")
+    parser.add_argument("--learning_rate", default=0.001, type=float, help="Initial learning rate for AdamW.")
     parser.add_argument("--weight_decay", default=0.1, type=float, help="Weight decay for AdamW.")
     parser.add_argument(
         "--decay_type", choices=["cosine", "linear"], default="cosine", help="How to decay the learning rate."
     )
-    parser.add_argument("--warmup_steps", default=4000, type=int, help="Number of warmup optimization steps.")
+    parser.add_argument("--warmup_steps", default=2000, type=int, help="Number of warmup optimization steps.")
 
     parser.add_argument(
         "--max_rotation_degrees",
@@ -465,8 +465,8 @@ def main():
 
     parser.add_argument("--w_1", default=1.0, type=float, help="Weight for CE(y, l_1).")
     parser.add_argument("--w_2", default=1.0, type=float, help="Weight for CE(y, l_2).")
-    parser.add_argument("--w_f", default=1.0, type=float, help="Weight for L1(z_1^L, z_2^L).")
-    parser.add_argument("--w_l", default=1.0, type=float, help="Weight for L1(l_1, l_2).")
+    parser.add_argument("--w_f", default=0.1, type=float, help="Weight for L1(z_1^L, z_2^L).")
+    parser.add_argument("--w_l", default=0.1, type=float, help="Weight for L1(l_1, l_2).")
     parser.add_argument("--beta1", default=0.9, type=float, help="Beta1 for AdamW.")
     parser.add_argument("--beta2", default=0.999, type=float, help="Beta2 for AdamW.")
     parser.add_argument("--model_type", default="ViT-B_16", help="Which ViT variant to use.")
