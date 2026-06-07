@@ -12,7 +12,7 @@ from torch.amp import autocast
 from pathlib import Path
 
 from models.modeling import VisionTransformer, CONFIGS
-from utils.augment_data_utils import get_loader
+from utils.flip_data_utils import get_loader
 
 logger = logging.getLogger(__name__)
 
@@ -212,7 +212,7 @@ def main():
 
     model = VisionTransformer(
         CONFIGS[args.model_type],
-        args.img_size,
+        img_size=args.img_size,
         zero_head=True,
         num_classes=1000,
     )

@@ -56,14 +56,13 @@ def get_lr_str(learning_rate):
     return f"{learning_rate:.10f}".rstrip("0").rstrip(".").replace(".", "_")
 
 
-def save_test_data(args, epoch, logits, labels):
+def save_test_data(args, logits, labels):
     logger.info("***** Start saving test data *****")
-    lr_str = get_lr_str(args.learning_rate)
-    test_data_path = Path(args.target_dir) / args.target_subdir / f"rot_vit_test_data_lr_{lr_str}_epoch_{epoch}.npz"
+    test_data_path = Path(args.target_dir) / args.target_subdir / f"rot_vit_test_data_angle_{int(args.max_rotation_degrees)}.npz"
     np.savez_compressed(test_data_path, logits=logits.astype(np.float16), labels=labels.astype(np.int16))
-    logger.info(f"Saved test data:                      {test_data_path}")
+    logger.info(f"Saved test data:                          {test_data_path}")
     metrics_size_mb = test_data_path.stat().st_size / (1024**2)
-    logger.info(f"Test data size:                       {metrics_size_mb:.2f} MB")
+    logger.info(f"Test data size:                           {metrics_size_mb:.2f} MB")
     logger.info("***** Test data saved successfully *****")
 
 
@@ -71,20 +70,12 @@ def load_vit(args, base_vit):
     if not args.vit_common_layers_checkpoint:
         raise ValueError("'vit_common_layers_checkpoint' must be provided.")
 
-    if not args.vit_last_layers_checkpoint:
-        raise ValueError("'vit_last_layers_checkpoint' must be provided.")
-
     logger.info("***** Loading common ViT layers *****")
-    logger.info(f"Common layers checkpoint path:        {args.vit_common_layers_checkpoint}")
-    logger.info(f"Last layers checkpoint path:          {args.vit_last_layers_checkpoint}")
+    logger.info(f"Common layers checkpoint path:            {args.vit_common_layers_checkpoint}")
 
     common_layers = torch.load(args.vit_common_layers_checkpoint, map_location="cpu")
     base_vit.load_state_dict(common_layers, strict=True)
 
-    last_layers_checkpoint = torch.load(args.vit_last_layers_checkpoint, map_location="cpu", weights_only=False)
-    last_layers = last_layers_checkpoint["model_state_dict"]
-    base_vit.transformer.encoder.layer[-1].load_state_dict(last_layers["last_transformer_block"])
-    base_vit.head.load_state_dict(last_layers["classifier_head"])
     logger.info("***** Common ViT layers succesfully downloaded *****")
 
 
@@ -92,7 +83,7 @@ def load_rot_vit_checkpoint(args, rot_vit):
     logger.info("***** Loading ROT-ViT checkpoint *****")
     lr_str = get_lr_str(args.learning_rate)
     checkpoint_path = Path(args.target_dir) / args.target_subdir / f"rot_vit_lr_{lr_str}_epoch_{args.epoch_num}.pth"
-    logger.info(f"Checkpoint path:                      {checkpoint_path}")
+    logger.info(f"Checkpoint path:                          {checkpoint_path}")
 
     checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
     model_state_dict = checkpoint["model_state_dict"]
@@ -147,8 +138,8 @@ def valid(args, model, val_loader):
 
     logger.info("")
     logger.info("***** Test Results *****")
-    logger.info(f"Test Loss:                            {eval_losses.avg:.5f}")
-    logger.info(f"Test Accuracy:                        {accuracy:.5f}")
+    logger.info(f"Test Loss:                                {eval_losses.avg:.5f}")
+    logger.info(f"Test Accuracy:                            {accuracy:.5f}")
 
     return accuracy, all_logits, all_labels
 
@@ -160,12 +151,6 @@ def main():
         type=str,
         default="/workspace/shared/ViT-B_16.pth",
         help="Path to pretrained ViT weights.",
-    )
-    parser.add_argument(
-        "--vit_last_layers_checkpoint",
-        type=str,
-        default="/workspace/shared/target_dir/lr_0_001/model_lr_0_001_epoch_9.pth",
-        help="Where to search for reference branch layers",
     )
     parser.add_argument("--checkpoint_path", type=str, default=None, help="Path to checkpoint to resume training.")
     parser.add_argument(
@@ -212,17 +197,11 @@ def main():
     logging.basicConfig(format="%(asctime)s - %(message)s", datefmt="%m/%d/%Y %H:%M:%S", level=logging.INFO)
 
     logger.info("***** Testing setup *****")
-    logger.info(f"Dataset path:                         {args.dataset_path}")
-    logger.info(f"Eval batch size:                      {args.eval_batch_size}")
-    logger.info(f"FP16:                                 {args.fp16}")
+    logger.info(f"Dataset path:                             {args.dataset_path}")
+    logger.info(f"Eval batch size:                          {args.eval_batch_size}")
+    logger.info(f"FP16:                                     {args.fp16}")
 
     set_seed(args)
-    base_vit = VisionTransformer(
-        CONFIGS[args.model_type],
-        args.img_size,
-        zero_head=True,
-        num_classes=1000,
-    )
 
     base_vit = VisionTransformer(CONFIGS[args.model_type], num_classes=1000, img_size=args.img_size, zero_head=True)
     load_vit(args, base_vit)
@@ -232,11 +211,11 @@ def main():
     rot_vit.to(args.device)
 
     logger.info(
-        f"Total parameters:                     {sum(p.numel() for p in rot_vit.parameters()) / 1_000_000:.1f}M"
+        f"Total parameters:                         {sum(p.numel() for p in rot_vit.parameters()) / 1_000_000:.1f}M"
     )
-    logger.info(f"Out features:                         {rot_vit.heads[0].out_features}")
-    logger.info(f"Output directory:                     {Path(args.target_dir) / args.target_subdir}")
-    logger.info(f"max_rotation_degrees:                 {args.max_rotation_degrees}")
+    logger.info(f"Out features:                             {rot_vit.heads[0].out_features}")
+    logger.info(f"Output directory:                         {Path(args.target_dir) / args.target_subdir}")
+    logger.info(f"max_rotation_degrees:                     {args.max_rotation_degrees}")
 
     _, val_loader = get_loader(args)
 

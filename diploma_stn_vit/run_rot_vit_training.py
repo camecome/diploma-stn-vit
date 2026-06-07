@@ -144,21 +144,33 @@ def load_vit(args, base_vit):
     if not args.vit_common_layers_checkpoint:
         raise ValueError("'vit_common_layers_checkpoint' must be provided.")
 
-    if not args.vit_last_layers_checkpoint:
-        raise ValueError("'vit_last_layers_checkpoint' must be provided.")
-
     logger.info("***** Loading common ViT layers *****")
     logger.info(f"Common layers checkpoint path:        {args.vit_common_layers_checkpoint}")
-    logger.info(f"Last layers checkpoint path:          {args.vit_last_layers_checkpoint}")
 
     common_layers = torch.load(args.vit_common_layers_checkpoint, map_location="cpu")
     base_vit.load_state_dict(common_layers, strict=True)
 
-    last_layers_checkpoint = torch.load(args.vit_last_layers_checkpoint, map_location="cpu", weights_only=False)
-    last_layers = last_layers_checkpoint["model_state_dict"]
-    base_vit.transformer.encoder.layer[-1].load_state_dict(last_layers["last_transformer_block"])
-    base_vit.head.load_state_dict(last_layers["classifier_head"])
     logger.info("***** Common ViT layers succesfully downloaded *****")
+
+def reinitialize_last_block_and_head(model):
+    last_block = model.transformer.encoder.layer[-1]
+    encoder_norm = model.transformer.encoder.encoder_norm
+
+    for module in last_block.modules():
+        if isinstance(module, torch.nn.Linear):
+            torch.nn.init.xavier_uniform_(module.weight)
+            if module.bias is not None:
+                torch.nn.init.normal_(module.bias, std=1e-6)
+
+        elif isinstance(module, torch.nn.LayerNorm):
+            torch.nn.init.ones_(module.weight)
+            torch.nn.init.zeros_(module.bias)
+
+    torch.nn.init.ones_(encoder_norm.weight)
+    torch.nn.init.zeros_(encoder_norm.bias)
+
+    torch.nn.init.zeros_(model.head.weight)
+    torch.nn.init.zeros_(model.head.bias)
 
 
 def load_rot_vit_checkpoint(args, rot_vit):
@@ -178,6 +190,7 @@ def load_rot_vit_checkpoint(args, rot_vit):
 def setup(args):
     base_vit = VisionTransformer(CONFIGS[args.model_type], num_classes=1000, img_size=args.img_size, zero_head=True)
     load_vit(args, base_vit)
+    reinitialize_last_block_and_head(base_vit)
     rot_vit = ROTVisionTransformer(base_vit=base_vit, max_rotation_degrees=args.max_rotation_degrees)
 
     if args.checkpoint_path:
@@ -420,12 +433,6 @@ def main():
         type=str,
         default="/workspace/shared/ViT-B_16.pth",
         help="Path to pretrained ViT weights.",
-    )
-    parser.add_argument(
-        "--vit_last_layers_checkpoint",
-        type=str,
-        default="/workspace/shared/target_dir/lr_0_001/model_lr_0_001_epoch_9.pth",
-        help="Where to search for reference branch layers",
     )
     parser.add_argument(
         "--target_dir",

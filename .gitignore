@@ -1,5 +1,6 @@
 .DS_Store
 imagenet1k
+dev_imagenet1k
 .vscode/
 __pycache__
 *.npz
