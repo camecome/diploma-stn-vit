@@ -20,7 +20,7 @@ from models.rot_vit.rot_vit import ROTVisionTransformer
 from models.rot_vit.rot_vit_loss import ROTViTLoss
 
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
-from utils.data_utils import get_loader
+from utils.augment_data_utils import get_loader
 
 logger = logging.getLogger(__name__)
 

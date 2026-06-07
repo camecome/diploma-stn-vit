@@ -65,8 +65,8 @@ def get_loader(args):
 
     transform_train = transforms.Compose(
         [
-            transforms.Resize((safe_size, safe_size)),
-            transforms.RandomRotation(degrees=(-args.max_rotation_degrees, args.max_rotation_degrees)),
+            # transforms.Resize((safe_size, safe_size)),
+            # transforms.RandomRotation(degrees=(-args.max_rotation_degrees, args.max_rotation_degrees)),
             transforms.CenterCrop((args.img_size, args.img_size)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5]),
