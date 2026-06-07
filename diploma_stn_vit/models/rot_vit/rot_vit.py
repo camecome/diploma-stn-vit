@@ -39,18 +39,18 @@ class ROTVisionTransformer(nn.Module):
             angles:              [B]
         """
 
-        hidden_states = self.base_vit.embeddings(x)
+        hidden_states = self.base_vit.transformer.embeddings(x)
 
-        for layer_block in self.base_vit.encoder.layer[:-1]:
+        for layer_block in self.base_vit.transformer.encoder.layer[:-1]:
             hidden_states, _ = layer_block(hidden_states)
 
         z_l_minus_1 = hidden_states
         z_l_minus_1_sec_branch = hidden_states
-        last_block = self.base_vit.encoder.layer[-1]
+        last_block = self.base_vit.transformer.encoder.layer[-1]
 
         # branch 1
         z_1_l, _ = last_block(z_l_minus_1)
-        z_1_l = self.base_vit.encoder.encoder_norm(z_1_l)
+        z_1_l = self.base_vit.transformer.encoder.encoder_norm(z_1_l)
         logits_1 = self.base_vit.head(z_1_l[:, 0])
 
         # Branch 2
@@ -67,7 +67,7 @@ class ROTVisionTransformer(nn.Module):
             )
 
         z_2_l, _ = last_block(z_rot)
-        z_2_l = self.base_vit.encoder.encoder_norm(z_2_l)
+        z_2_l = self.base_vit.transformer.encoder.encoder_norm(z_2_l)
         logits_2 = self.base_vit.head(z_2_l[:, 0])
 
         logits_per_branch = torch.stack([logits_1, logits_2], dim=0)
