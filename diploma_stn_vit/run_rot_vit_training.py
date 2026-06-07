@@ -16,7 +16,7 @@ from tqdm import tqdm
 from torch.amp import autocast, GradScaler
 
 from models.modeling import VisionTransformer
-from models.rot_vit.rot_vit import ROTVisionTransformer, CONFIGS
+from models.rot_vit.rot_vit import ROTVisionTransformer
 from models.rot_vit.rot_vit_loss import ROTViTLoss
 
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
