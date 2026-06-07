@@ -109,9 +109,9 @@ def save_model(args, model, epoch, best_epoch, optimizer, scheduler, accuracy):
     lr_str = get_lr_str(args.learning_rate)
     checkpoint_path = Path(args.target_dir) / args.target_subdir / f"rot_vit_lr_{lr_str}_epoch_{epoch}.pth"
     torch.save(checkpoint, checkpoint_path)
-    logger.info(f"Saved checkpoint:                {checkpoint_path}")
+    logger.info(f"Saved checkpoint:                     {checkpoint_path}")
     checkpoint_size_mb = checkpoint_path.stat().st_size / (1024**2)
-    logger.info(f"Checkpoint size:                 {checkpoint_size_mb:.2f} MB")
+    logger.info(f"Checkpoint size:                      {checkpoint_size_mb:.2f} MB")
     logger.info("***** Checkpoint saved successfully *****")
 
 
@@ -120,9 +120,9 @@ def save_val_data(args, epoch, logits, labels):
     lr_str = get_lr_str(args.learning_rate)
     val_data_path = Path(args.target_dir) / args.target_subdir / f"rot_vit_val_data_lr_{lr_str}_epoch_{epoch}.npz"
     np.savez_compressed(val_data_path, logits=logits.astype(np.float16), labels=labels.astype(np.int16))
-    logger.info(f"Saved validation data:           {val_data_path}")
+    logger.info(f"Saved validation data:                {val_data_path}")
     metrics_size_mb = val_data_path.stat().st_size / (1024**2)
-    logger.info(f"Val data size:                   {metrics_size_mb:.2f} MB")
+    logger.info(f"Val data size:                        {metrics_size_mb:.2f} MB")
     logger.info("***** Val data saved successfully *****")
 
 
@@ -145,8 +145,8 @@ def load_vit(args, base_vit):
         raise ValueError("'vit_last_layers_checkpoint' must be provided.")
 
     logger.info("***** Loading common ViT layers *****")
-    logger.info(f"Common layers checkpoint path:   {args.vit_common_layers_checkpoint}")
-    logger.info(f"Last layers checkpoint path:     {args.vit_last_layers_checkpoint}")
+    logger.info(f"Common layers checkpoint path:        {args.vit_common_layers_checkpoint}")
+    logger.info(f"Last layers checkpoint path:          {args.vit_last_layers_checkpoint}")
 
     common_layers = torch.load(args.vit_common_layers_checkpoint, map_location="cpu")
     base_vit.load_state_dict(common_layers, strict=True)
@@ -174,13 +174,13 @@ def setup(args):
     rot_vit.to(args.device)
 
     logger.info(
-        f"Total parameters:                {sum(p.numel() for p in rot_vit.base_vit.parameters()) / 1_000_000:.1f}M"
+        f"Total parameters:                     {sum(p.numel() for p in rot_vit.base_vit.parameters()) / 1_000_000:.1f}M"
     )
     logger.info(
-        f"Total trainable parameters:      {sum(p.numel() for p in rot_vit.base_vit.parameters() if p.requires_grad) / 1_000_000:.1f}M"
+        f"Total trainable parameters:           {sum(p.numel() for p in rot_vit.base_vit.parameters() if p.requires_grad) / 1_000_000:.1f}M"
     )
-    logger.info(f"Out features:                    {rot_vit.base_vit.head.out_features}")
-    logger.info(f"Max rotation degrees:            {args.max_rotation_degrees}")
+    logger.info(f"Out features:                         {rot_vit.base_vit.head.out_features}")
+    logger.info(f"Max rotation degrees:                 {args.max_rotation_degrees}")
 
     return args, rot_vit
 
@@ -247,35 +247,35 @@ def train(args, model):
 
     logger.info("=" * 80)
     logger.info("***** Main info *****")
-    logger.info(f"Physical train batch size:       {args.physical_train_batch_size}")
-    logger.info(f"Gradient accumulation steps:     {args.gradient_accumulation_steps}")
-    logger.info(f"Effective train batch size:      {args.effective_train_batch_size}")
-    logger.info(f"Eval batch size:                 {args.eval_batch_size}")
-    logger.info(f"Number of epochs:                {args.epoch_num}")
-    logger.info(f"LR:                              {args.learning_rate}")
-    logger.info(f"Beta1:                           {args.beta1}")
-    logger.info(f"Beta2:                           {args.beta2}")
-    logger.info(f"Number of warmup steps:          {args.warmup_steps}")
-    logger.info(f"Weight decay type:               {args.decay_type}")
-    logger.info(f"WD:                              {args.weight_decay}")
-    logger.info(f"Image size:                      {args.img_size}")
-    logger.info(f"Max rotation degrees:            {args.max_rotation_degrees}")
-    logger.info(f"Loss weight w_1:                 {args.w_1}")
-    logger.info(f"Loss weight w_2:                 {args.w_2}")
-    logger.info(f"Loss weight w_f:                 {args.w_f}")
-    logger.info(f"Loss weight w_l:                 {args.w_l}")
+    logger.info(f"Physical train batch size:            {args.physical_train_batch_size}")
+    logger.info(f"Gradient accumulation steps:          {args.gradient_accumulation_steps}")
+    logger.info(f"Effective train batch size:           {args.effective_train_batch_size}")
+    logger.info(f"Eval batch size:                      {args.eval_batch_size}")
+    logger.info(f"Number of epochs:                     {args.epoch_num}")
+    logger.info(f"LR:                                   {args.learning_rate}")
+    logger.info(f"Beta1:                                {args.beta1}")
+    logger.info(f"Beta2:                                {args.beta2}")
+    logger.info(f"Number of warmup steps:               {args.warmup_steps}")
+    logger.info(f"Weight decay type:                    {args.decay_type}")
+    logger.info(f"WD:                                   {args.weight_decay}")
+    logger.info(f"Image size:                           {args.img_size}")
+    logger.info(f"Max rotation degrees:                 {args.max_rotation_degrees}")
+    logger.info(f"Loss weight w_1:                      {args.w_1}")
+    logger.info(f"Loss weight w_2:                      {args.w_2}")
+    logger.info(f"Loss weight w_f:                      {args.w_f}")
+    logger.info(f"Loss weight w_l:                      {args.w_l}")
 
     train_loader, val_loader = get_loader(args)
 
-    logger.info(f"Train images:                    {len(train_loader.dataset)}")
-    logger.info(f"Validation images:               {len(val_loader.dataset)}")
+    logger.info(f"Train images:                         {len(train_loader.dataset)}")
+    logger.info(f"Validation images:                    {len(val_loader.dataset)}")
 
     opt_steps_in_epoch = len(train_loader) // args.gradient_accumulation_steps
     total_opt_step = opt_steps_in_epoch * args.epoch_num
 
     trainable_params = filter(lambda p: p.requires_grad, model.parameters())
-    logger.info(f"Optimization steps in epoch:     {opt_steps_in_epoch}")
-    logger.info(f"Total optimization steps:        {total_opt_step}")
+    logger.info(f"Optimization steps in epoch:          {opt_steps_in_epoch}")
+    logger.info(f"Total optimization steps:             {total_opt_step}")
 
     optimizer = torch.optim.AdamW(
         trainable_params, lr=args.learning_rate, betas=(args.beta1, args.beta2), weight_decay=args.weight_decay
@@ -299,8 +299,8 @@ def train(args, model):
         remaining_opt_steps = (args.epoch_num - start_epoch + 1) * opt_steps_in_epoch
         logger.info(f"Remaining opt steps:             {remaining_opt_steps}")
 
-    logger.info(f"Num of validation steps:         {len(val_loader)}")
-    logger.info(f"Output directory:                {Path(args.target_dir) / args.target_subdir}")
+    logger.info(f"Num of validation steps:              {len(val_loader)}")
+    logger.info(f"Output directory:                     {Path(args.target_dir) / args.target_subdir}")
     logger.info("=" * 80)
     logger.info("")
 
@@ -386,15 +386,15 @@ def train(args, model):
         model.train()
 
         logger.info(f"***** Epoch [{epoch} / {args.epoch_num}] finished *****")
-        logger.info(f"Epoch time:                      {(time.time() - epoch_start_time):.2f} sec")
-        logger.info(f"Best accuracy:                   {best_acc:.5f}")
+        logger.info(f"Epoch time:                           {(time.time() - epoch_start_time):.2f} sec")
+        logger.info(f"Best accuracy:                        {best_acc:.5f}")
         logger.info("")
         logger.info("Epoch train losses:")
-        logger.info(f"  loss avg:                      {losses.avg:.5f}")
-        logger.info(f"  ce_1 avg:                      {ce_1_meter.avg:.5f}")
-        logger.info(f"  ce_2 avg:                      {ce_2_meter.avg:.5f}")
-        logger.info(f"  features_l1 avg:               {features_l1_meter.avg:.5f}")
-        logger.info(f"  logits_l1 avg:                 {logits_l1_meter.avg:.5f}")
+        logger.info(f"  loss avg:                           {losses.avg:.5f}")
+        logger.info(f"  ce_1 avg:                           {ce_1_meter.avg:.5f}")
+        logger.info(f"  ce_2 avg:                           {ce_2_meter.avg:.5f}")
+        logger.info(f"  features_l1 avg:                    {features_l1_meter.avg:.5f}")
+        logger.info(f"  logits_l1 avg:                      {logits_l1_meter.avg:.5f}")
         logger.info("")
 
         losses.reset()
@@ -403,7 +403,7 @@ def train(args, model):
         features_l1_meter.reset()
         logits_l1_meter.reset()
 
-    logger.info(f"Best Accuracy:                   {best_acc:.5f}")
+    logger.info(f"Best Accuracy:                        {best_acc:.5f}")
     logger.info("***** End training! *****")
 
 
