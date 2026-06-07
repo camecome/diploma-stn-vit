@@ -85,8 +85,9 @@ def save_model(args, model, epoch, best_epoch, optimizer, scheduler, best_accura
     model_to_save = model.module if hasattr(model, "module") else model
 
     trainable_state_dict = {
-        "last_transformer_block": model_to_save.base_vit.transformer.encoder.layer[-1].state_dict(),
-        "classifier_head": model_to_save.base_vit.head.state_dict(),
+        "last_layers": model_to_save.last_layers.state_dict(),
+        "norms": model_to_save.norms.state_dict(),
+        "heads": model_to_save.heads.state_dict(),
     }
 
     checkpoint = {
@@ -126,13 +127,16 @@ def save_val_data(args, epoch, logits, labels):
 
 
 def freeze_rot_vit_common_layers(rot_vit):
-    for param in rot_vit.base_vit.parameters():
+    for param in rot_vit.parameters():
         param.requires_grad = False
 
-    for param in rot_vit.base_vit.transformer.encoder.layer[-1].parameters():
+    for param in rot_vit.last_layers.parameters():
         param.requires_grad = True
 
-    for param in rot_vit.base_vit.head.parameters():
+    for param in rot_vit.norms.parameters():
+        param.requires_grad = True
+
+    for param in rot_vit.heads.parameters():
         param.requires_grad = True
 
 
@@ -158,7 +162,17 @@ def load_vit(args, base_vit):
 
 
 def load_rot_vit_checkpoint(args, rot_vit):
-    raise NotImplementedError(":(")
+    logger.info("***** Loading ROT-ViT checkpoint *****")
+    logger.info(f"Checkpoint path:                      {args.checkpoint_path}")
+
+    checkpoint = torch.load(args.checkpoint_path, map_location="cpu", weights_only=False)
+    model_state_dict = checkpoint["model_state_dict"]
+
+    rot_vit.last_layers.load_state_dict(model_state_dict["last_layers"])
+    rot_vit.norms.load_state_dict(model_state_dict["norms"])
+    rot_vit.heads.load_state_dict(model_state_dict["heads"])
+
+    logger.info("***** ROT-ViT checkpoint successfully loaded *****")
 
 
 def setup(args):
@@ -173,12 +187,12 @@ def setup(args):
     rot_vit.to(args.device)
 
     logger.info(
-        f"Total parameters:                     {sum(p.numel() for p in rot_vit.base_vit.parameters()) / 1_000_000:.1f}M"
+        f"Total parameters:                     {sum(p.numel() for p in rot_vit.parameters()) / 1_000_000:.1f}M"
     )
     logger.info(
-        f"Total trainable parameters:           {sum(p.numel() for p in rot_vit.base_vit.parameters() if p.requires_grad) / 1_000_000:.1f}M"
+        f"Total trainable parameters:           {sum(p.numel() for p in rot_vit.parameters() if p.requires_grad) / 1_000_000:.1f}M"
     )
-    logger.info(f"Out features:                         {rot_vit.base_vit.head.out_features}")
+    logger.info(f"Out features:                         {rot_vit.heads[0].out_features}")
     logger.info(f"Max rotation degrees:                 {args.max_rotation_degrees}")
 
     return args, rot_vit
