@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.transforms.functional as TF
-from torchvision.transforms import InterpolationMode
+import math
 
 from .localization import ViTLocalization
 from utils.augment_data_utils import get_safe_rotation_size
@@ -19,21 +19,32 @@ def rotate_batch(images: torch.Tensor, degrees: torch.Tensor) -> torch.Tensor:
 
     if images.shape[0] != degrees.shape[0]:
         raise ValueError(
-            f"Batch size mismatch: images.shape[0]={images.shape[0]}, " f"degrees.shape[0]={degrees.shape[0]}"
+            f"Batch size mismatch: images.shape[0]={images.shape[0]}, "
+            f"degrees.shape[0]={degrees.shape[0]}"
         )
 
-    rotated = [
-        TF.rotate(
-            img=img,
-            angle=float(angle.item()),
-            interpolation=InterpolationMode.NEAREST,  # like in transforms.RandomRotation
-            expand=False,
-            fill=0,  # should not affect as images are resized before rotation and there should be bo black borders to fill
-        )
-        for img, angle in zip(images, degrees)
-    ]
+    batch_size = images.shape[0]
 
-    return torch.stack(rotated, dim=0)
+    radians = degrees * math.pi / 180.0
+    cos = torch.cos(radians)
+    sin = torch.sin(radians)
+
+    theta = torch.zeros(batch_size, 2, 3, device=images.device, dtype=images.dtype)
+
+    theta[:, 0, 0] = cos
+    theta[:, 0, 1] = -sin
+    theta[:, 1, 0] = sin
+    theta[:, 1, 1] = cos
+
+    grid = F.affine_grid(theta, images.size(), align_corners=False)
+
+    return F.grid_sample(
+        images,
+        grid,
+        mode="nearest",
+        padding_mode="zeros",
+        align_corners=False,
+    )
 
 
 def rotate_images_without_black_borders(images, max_angle):
@@ -116,7 +127,7 @@ class SpatialTransformerViT(nn.Module):
 
         self.heads = nn.ModuleList([copy.deepcopy(base_vit.head) for _ in range(self.num_branches)])
 
-        # на выходе 6 параметров
+        # на выходе 4 параметра
         self.loc_net = ViTLocalization(
             input_shape=[768, 14, 14],
             conv_channels=conv_channels,
@@ -148,11 +159,11 @@ class SpatialTransformerViT(nn.Module):
             end = (branch_idx + 1) * batch_size
             # branch_hidden_states [batch_size, 197, 768]
             branch_hidden_states = hidden_states[start:end]
-            theta = None
+            a = None
 
             if branch_idx > self.REFERENCE_BRANCH:
-                # theta [batch_size, 4]
-                branch_hidden_states, theta = self.transform_patch_tokens(branch_hidden_states, return_theta=True)
+                # a [batch_size, 2, 2]
+                branch_hidden_states, a = self.transform_patch_tokens(branch_hidden_states, return_theta=True)
 
             logits, features = get_features_logits(
                 layer=self.last_layers[branch_idx],
@@ -166,14 +177,14 @@ class SpatialTransformerViT(nn.Module):
             features_per_branch.append(features)
             logits_per_branch.append(logits)
 
-            if theta is not None:
-                theta_per_branch.append(theta)
+            if a is not None:
+                theta_per_branch.append(a)
 
         # [self.num_branches, batch_size, 1k]
         logits_per_branch = torch.stack(logits_per_branch, dim=0)
         # [self.num_branches, batch_size, 197, 768]
         features_per_branch = torch.stack(features_per_branch, dim=0)
-        # [batch_size, 4]
+        # [batch_size, 2, 2]
         theta_per_branch = torch.stack(theta_per_branch, dim=0)
 
         return logits_per_branch, features_per_branch, theta_per_branch
@@ -221,10 +232,12 @@ class SpatialTransformerViT(nn.Module):
         # patch_feature_map [batch_size, 768, 14, 14]
         patch_feature_map = self.tokens_to_feature_map(patch_tokens)
 
-        # [batch_size, 6]
-        theta = self.loc_net(patch_feature_map)
+        # delta_a [batch_size, 4]
+        delta_a = self.loc_net(patch_feature_map)
 
-        # rotate patches as pixels
+        # theta [batch_size, 2, 3], a [batch_size, 2, 2]
+        theta, a = self.build_affine_theta(delta_a)
+
         # transformed_patch_feature_map [batch_size, 768, 14, 14]
         transformed_patch_feature_map = self.apply_stn(patch_feature_map, theta)
 
@@ -235,7 +248,7 @@ class SpatialTransformerViT(nn.Module):
         transformed_hidden_states = torch.cat([cls_token, transformed_patch_tokens], dim=1)
 
         if return_theta:
-            return transformed_hidden_states, theta
+            return transformed_hidden_states, a
 
         return transformed_hidden_states
 
@@ -257,7 +270,8 @@ class SpatialTransformerViT(nn.Module):
         return feature_map.flatten(2).transpose(1, 2)
 
     def apply_stn(self, feature_map, theta):
-        theta = theta.reshape(-1, 2, 3)
+        if theta.ndim != 3 or theta.shape[1:] != (2, 3):
+            raise ValueError(f"Expected theta with shape [B, 2, 3], got {theta.shape}")
 
         grid = F.affine_grid(
             theta,
@@ -271,3 +285,38 @@ class SpatialTransformerViT(nn.Module):
             padding_mode="zeros",
             align_corners=False,
         )
+    
+    def build_affine_theta(self, delta_a):
+        """
+        delta_a: [B, 4]
+
+        Возвращает:
+            theta: [B, 2, 3] — полная affine-матрица для affine_grid
+            a:     [B, 2, 2] — левая квадратная подматрица A для regularization loss
+        """
+        batch_size = delta_a.shape[0]
+
+        delta_a = delta_a.reshape(batch_size, 2, 2)
+
+        identity = torch.eye(
+            2,
+            device=delta_a.device,
+            dtype=delta_a.dtype,
+        ).unsqueeze(0)
+
+        # A = I + delta A
+        a = identity + delta_a
+
+        # фиксированный нулевой сдвиг
+        zeros = torch.zeros(
+            batch_size,
+            2,
+            1,
+            device=delta_a.device,
+            dtype=delta_a.dtype,
+        )
+
+        # theta = [A | 0], shape [B, 2, 3]
+        theta = torch.cat([a, zeros], dim=2)
+
+        return theta, a

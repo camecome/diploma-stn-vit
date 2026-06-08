@@ -43,6 +43,7 @@ class STNViTLoss(nn.Module):
         if self.detach_reference:
             features_1_for_l1 = features_1.detach()
             logits_1_for_l1 = logits_1.detach()
+            raise NotImplementedError(":(")
         else:
             features_1_for_l1 = features_1
             logits_1_for_l1 = logits_1
@@ -76,40 +77,28 @@ class STNViTLoss(nn.Module):
 
     def affine_regularization(self, theta_per_branch):
         """
-        Регуляризация только 4 параметров линейной части affine-матрицы.
+        Регуляризация только левой квадратной подматрицы A.
 
         theta_per_branch:
-            [num_rotations, B, 6] или [num_rotations, B, 4]
+            [num_rotations, B, 2, 2]
         """
-        # theta_per_branch [num_rotations, batch_size, 6 или 4], num_rotations = 1
-        # theta [batch_size, 6 или 4]
-        theta = theta_per_branch.reshape(-1, theta_per_branch.shape[-1])
+        if theta_per_branch.ndim != 4 or theta_per_branch.shape[-2:] != (2, 2):
+            raise ValueError(f"Expected theta_per_branch with shape [num_rotations, B, 2, 2], got {theta_per_branch.shape}")
 
-        if theta.shape[-1] == 6:
-            # берем только:
-            # [a11, a12, tx,
-            #  a21, a22, ty]
-            # то есть линейную часть:
-            # [a11, a12,
-            #  a21, a22]
-            a = theta.reshape(-1, 2, 3)[:, :, :2]
-        elif theta.shape[-1] == 4:
-            a = theta.reshape(-1, 2, 2)
-        else:
-            raise ValueError(f"Expected theta with 4 or 6 params, got {theta.shape}")
+        # a [num_rotations * B, 2, 2]
+        a = theta_per_branch.reshape(-1, 2, 2)
 
         batch_size = a.shape[0]
-        identity = torch.eye(2, device=a.device, dtype=a.dtype).unsqueeze(0).expand(batch_size, -1, -1)
+
+        identity = torch.eye(
+            2,
+            device=a.device,
+            dtype=a.dtype,
+        ).unsqueeze(0).expand(batch_size, -1, -1)
 
         if self.affine_reg_type == "orthogonal":
-            # штрафует неортогональность: A A^T должно быть близко к I
-            # batch matrix multiplication
-            ata = torch.bmm(a, a.transpose(1, 2))
-            return F.mse_loss(ata, identity)
-
-        if self.affine_reg_type == "identity":
-            # штрафует отклонение A от I
-            # return F.mse_loss(a, identity)
-            raise ValueError("affine_reg_type = orthogonal is expected")
+            # A A^T должно быть близко к I
+            aat = torch.bmm(a, a.transpose(1, 2))
+            return F.mse_loss(aat, identity)
 
         raise ValueError(f"Unknown affine_reg_type={self.affine_reg_type}")

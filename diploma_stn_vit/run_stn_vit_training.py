@@ -19,7 +19,7 @@ from models.modeling import VisionTransformer, CONFIGS
 from models.stn.stn_vit import SpatialTransformerViT
 from models.stn.stn_vit_loss import STNViTLoss
 from utils.scheduler import WarmupLinearSchedule, WarmupCosineSchedule
-from utils.data_utils import get_loader
+from utils.augment_data_utils import get_loader
 
 from pathlib import Path
 
@@ -65,20 +65,11 @@ def load_vit(args, base_vit):
     if not args.vit_common_layers_checkpoint:
         raise ValueError("'vit_common_layers_checkpoint' must be provided.")
 
-    if not args.vit_last_layers_checkpoint:
-        raise ValueError("'vit_last_layers_checkpoint' must be provided.")
-
     logger.info("***** Loading common ViT layers *****")
-    logger.info(f"Common layers checkpoint path:   {args.vit_common_layers_checkpoint}")
-    logger.info(f"Last layers checkpoint path:     {args.vit_last_layers_checkpoint}")
+    logger.info(f"Common layers checkpoint path:        {args.vit_common_layers_checkpoint}")
 
     common_layers = torch.load(args.vit_common_layers_checkpoint, map_location="cpu")
     base_vit.load_state_dict(common_layers, strict=True)
-
-    last_layers_checkpoint = torch.load(args.vit_last_layers_checkpoint, map_location="cpu", weights_only=False)
-    last_layers = last_layers_checkpoint["model_state_dict"]
-    base_vit.transformer.encoder.layer[-1].load_state_dict(last_layers["last_transformer_block"])
-    base_vit.head.load_state_dict(last_layers["classifier_head"])
     logger.info("***** Common ViT layers succesfully downloaded *****")
 
 
@@ -123,16 +114,16 @@ def setup(args):
 
     freeze_stn_vit_common_layers(stn_vit)
     stn_vit.to(args.device)
-    logger.info(f"Total STN-ViT parameters:        {sum(p.numel() for p in stn_vit.parameters()) / 1_000_000:.1f}M")
+    logger.info(f"Total STN-ViT parameters:             {sum(p.numel() for p in stn_vit.parameters()) / 1_000_000:.1f}M")
     logger.info(
-        f"Trainable STN-ViT parameters:    {sum(p.numel() for p in stn_vit.parameters() if p.requires_grad) / 1_000_000:.1f}M"
+        f"Trainable STN-ViT parameters:         {sum(p.numel() for p in stn_vit.parameters() if p.requires_grad) / 1_000_000:.1f}M"
     )
-    logger.info(f"Max rotation degrees:            {args.max_rotation_degrees}")
+    logger.info(f"Max rotation degrees:                 {args.max_rotation_degrees}")
 
     return args, stn_vit
 
 
-def save_model(args, model, epoch, best_epoch, optimizer, scheduler, accuracy):
+def save_model(args, model, epoch, best_epoch, optimizer, scheduler, best_acc):
     logger.info("***** Start saving STN checkpoint *****")
 
     model = model.module if hasattr(model, "module") else model
@@ -149,7 +140,7 @@ def save_model(args, model, epoch, best_epoch, optimizer, scheduler, accuracy):
         "optimizer_state_dict": optimizer.state_dict(),
         "scheduler_state_dict": scheduler.state_dict(),
         "epoch": epoch,
-        "accuracy": accuracy,
+        "best_acc": best_acc,
         "best_epoch": best_epoch,
     }
 
@@ -157,9 +148,9 @@ def save_model(args, model, epoch, best_epoch, optimizer, scheduler, accuracy):
     checkpoint_path = Path(args.target_dir) / args.target_subdir / f"stn_vit_{lr_str}_epoch_{epoch}.pth"
     torch.save(checkpoint, checkpoint_path)
 
-    logger.info(f"Saved checkpoint:                {checkpoint_path}")
+    logger.info(f"Saved checkpoint:                     {checkpoint_path}")
     checkpoint_size_mb = checkpoint_path.stat().st_size / (1024**2)
-    logger.info(f"Checkpoint size:                 {checkpoint_size_mb:.2f} MB")
+    logger.info(f"Checkpoint size:                      {checkpoint_size_mb:.2f} MB")
     logger.info("***** STN checkpoint saved successfully *****")
 
 
@@ -170,16 +161,16 @@ def load_stn_vit_train_state(args, optimizer, scheduler):
     if start_epoch > args.epoch_num:
         raise ValueError("Checkpoint already reached the target number of epochs. Nothing to resume.")
 
-    best_acc = checkpoint.get("accuracy", 0)
+    best_acc = checkpoint.get("best_acc", 0)
     best_epoch = checkpoint.get("best_epoch", start_epoch - 1)
     optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     scheduler.load_state_dict(checkpoint["scheduler_state_dict"])
 
     current_lr = scheduler.get_last_lr()[0]
-    logger.info(f"Start epoch:                     {start_epoch}")
-    logger.info(f"Best accuracy:                   {best_acc:.5f}")
-    logger.info(f"Best epoch:                      {best_epoch}")
-    logger.info(f"Current LR:                      {current_lr:.5f}")
+    logger.info(f"Start epoch:                          {start_epoch}")
+    logger.info(f"Best accuracy:                        {best_acc:.5f}")
+    logger.info(f"Best epoch:                           {best_epoch}")
+    logger.info(f"Current LR:                           {current_lr:.5f}")
 
     return start_epoch, best_acc, best_epoch
 
@@ -189,7 +180,7 @@ def valid(args, model, val_loader, opt_step, scheduler):
 
     logger.info(f"***** Running validation after optimization step {opt_step} *****")
     current_lr = scheduler.get_last_lr()[0]
-    logger.info(f"Current LR:                      {current_lr:.5f}")
+    logger.info(f"Current LR:                           {current_lr:.5f}")
 
     model.eval()
     all_preds, all_labels, all_logits = [], [], []
@@ -229,8 +220,8 @@ def valid(args, model, val_loader, opt_step, scheduler):
 
     logger.info("\n")
     logger.info("***** Validation Results *****")
-    logger.info(f"Valid Loss:                      {eval_losses.avg:.5f}")
-    logger.info(f"Valid Accuracy:                  {accuracy:.5f}")
+    logger.info(f"Valid Loss:                           {eval_losses.avg:.5f}")
+    logger.info(f"Valid Accuracy:                       {accuracy:.5f}")
 
     return accuracy, all_logits, all_labels
 
@@ -248,8 +239,8 @@ def save_val_data(args, epoch, logits, labels):
 
     metrics_size_mb = val_data_path.stat().st_size / (1024**2)
 
-    logger.info(f"Saved validation data:       {val_data_path}")
-    logger.info(f"Val data size:               {metrics_size_mb:.2f} MB")
+    logger.info(f"Saved validation data:                {val_data_path}")
+    logger.info(f"Val data size:                        {metrics_size_mb:.2f} MB")
     logger.info("***** Val data saved successfully *****")
 
 
@@ -261,38 +252,37 @@ def train(args, model):
 
     logger.info("=" * 80)
     logger.info("***** Main info *****")
-    logger.info(f"Physical train batch size:       {args.physical_train_batch_size}")
-    logger.info(f"Gradient accumulation steps:     {args.gradient_accumulation_steps}")
-    logger.info(f"Effective train batch size:      {args.effective_train_batch_size}")
-    logger.info(f"Eval batch size:                 {args.eval_batch_size}")
-    logger.info(f"Number of epochs:                {args.epoch_num}")
-    logger.info(f"LR:                              {args.learning_rate}")
-    logger.info(f"Beta1:                           {args.beta1}")
-    logger.info(f"Beta2:                           {args.beta2}")
-    logger.info(f"Number of warmup steps:          {args.warmup_steps}")
-    logger.info(f"Weight decay type:               {args.decay_type}")
-    logger.info(f"WD:                              {args.weight_decay}")
-    logger.info(f"Image size:                      {args.img_size}")
+    logger.info(f"Physical train batch size:            {args.physical_train_batch_size}")
+    logger.info(f"Gradient accumulation steps:          {args.gradient_accumulation_steps}")
+    logger.info(f"Effective train batch size:           {args.effective_train_batch_size}")
+    logger.info(f"Eval batch size:                      {args.eval_batch_size}")
+    logger.info(f"Number of epochs:                     {args.epoch_num}")
+    logger.info(f"LR:                                   {args.learning_rate}")
+    logger.info(f"Beta1:                                {args.beta1}")
+    logger.info(f"Beta2:                                {args.beta2}")
+    logger.info(f"Number of warmup steps:               {args.warmup_steps}")
+    logger.info(f"Weight decay type:                    {args.decay_type}")
+    logger.info(f"WD:                                   {args.weight_decay}")
+    logger.info(f"Image size:                           {args.img_size}")
 
     train_loader, val_loader = get_loader(args)
-    logger.info(f"Train images:                    {len(train_loader.dataset)}")  # last batch is dropped
-    logger.info(f"Validation images:               {len(val_loader.dataset)}")
+    logger.info(f"Train images:                         {len(train_loader.dataset)}")  # last batch is dropped
+    logger.info(f"Validation images:                    {len(val_loader.dataset)}")
 
     opt_steps_in_epoch = len(train_loader) // args.gradient_accumulation_steps
     total_opt_step = opt_steps_in_epoch * args.epoch_num
     trainable_params = filter(lambda p: p.requires_grad, model.parameters())
 
-    logger.info(f"Optimization steps in epoch:     {opt_steps_in_epoch}")
-    logger.info(f"Total optimization steps:        {total_opt_step}")
+    logger.info(f"Optimization steps in epoch:          {opt_steps_in_epoch}")
+    logger.info(f"Total optimization steps:             {total_opt_step}")
 
     # loss params
-    logger.info(f"Loss w_1:                        {args.loss_w_1}")
-    logger.info(f"Loss w_2:                        {args.loss_w_2}")
-    logger.info(f"Loss w_f:                        {args.loss_w_f}")
-    logger.info(f"Loss w_l:                        {args.loss_w_l}")
-    logger.info(f"Loss w_affine:                   {args.loss_w_affine}")
-    logger.info(f"Loss detach_reference:           {args.loss_detach_reference}")
-    logger.info(f"Loss affine_reg_type:            {args.loss_affine_reg_type}")
+    logger.info(f"Loss w_1:                             {args.loss_w_1}")
+    logger.info(f"Loss w_2:                             {args.loss_w_2}")
+    logger.info(f"Loss w_f:                             {args.loss_w_f}")
+    logger.info(f"Loss w_l:                             {args.loss_w_l}")
+    logger.info(f"Loss w_affine:                        {args.loss_w_affine}")
+    logger.info(f"Loss detach_reference:                {args.loss_detach_reference}")
 
     optimizer = torch.optim.AdamW(
         trainable_params, lr=args.learning_rate, betas=(args.beta1, args.beta2), weight_decay=args.weight_decay
@@ -315,10 +305,10 @@ def train(args, model):
         remaining_opt_steps = (args.epoch_num - start_epoch + 1) * (
             len(train_loader) // args.gradient_accumulation_steps
         )
-        logger.info(f"Remaining opt steps:             {remaining_opt_steps}")
+        logger.info(f"Remaining opt steps:                  {remaining_opt_steps}")
 
-    logger.info(f"Num of validation steps:         {len(val_loader)}")
-    logger.info(f"Output directory:                {Path(args.target_dir) / args.target_subdir}")
+    logger.info(f"Num of validation steps:              {len(val_loader)}")
+    logger.info(f"Output directory:                     {Path(args.target_dir) / args.target_subdir}")
     logger.info("=" * 80)
     logger.info("\n")
 
@@ -338,7 +328,6 @@ def train(args, model):
         w_l=args.loss_w_l,
         w_affine=args.loss_w_affine,
         detach_reference=args.loss_detach_reference,
-        affine_reg_type=args.loss_affine_reg_type,
     ).to(args.device)
 
     # for logging loss values
@@ -415,18 +404,19 @@ def train(args, model):
 
         accuracy, logits, labels = valid(args, model, val_loader, opt_step, scheduler)
         if accuracy > best_acc:
-            logger.info(f"New best accuracy:               {best_acc:.5f} -> {accuracy:.5f}")
+            logger.info(f"New best accuracy:                    {best_acc:.5f} -> {accuracy:.5f}")
+            logger.info(f"New best epoch:                       {best_epoch} -> {epoch}")
             best_acc = accuracy
             best_epoch = epoch
-        save_model(args, model, epoch, best_epoch, optimizer, scheduler, accuracy)
+        save_model(args, model, epoch, best_epoch, optimizer, scheduler, best_acc)
         save_val_data(args, epoch, logits, labels)
 
         model.train()
 
         logger.info(f"***** Epoch [{epoch} / {args.epoch_num}] finished *****")
-        logger.info(f"Epoch time:                      {(time.time() - epoch_start_time):.2f} sec")
-        logger.info(f"Best accuracy:                   {best_acc:.5f}")
-        logger.info(f"Best epoch:                      {best_epoch}")
+        logger.info(f"Epoch time:                           {(time.time() - epoch_start_time):.2f} sec")
+        logger.info(f"Best accuracy:                        {best_acc:.5f}")
+        logger.info(f"Best epoch:                           {best_epoch}")
         logger.info("\n")
 
         main_losses.reset()
@@ -436,8 +426,8 @@ def train(args, model):
         logits_l1_losses.reset()
         affine_l2_losses.reset()
 
-    logger.info(f"Best Accuracy:                   {best_acc:.5f}")
-    logger.info(f"Best epoch:                      {best_epoch}")
+    logger.info(f"Best Accuracy:                        {best_acc:.5f}")
+    logger.info(f"Best epoch:                           {best_epoch}")
     logger.info("***** End training! *****")
 
 
@@ -458,12 +448,6 @@ def main():
         help="Directory to store validation data.",
     )
     parser.add_argument("--dataset_path", default="/workspace/dev_imagenet1k", help="Path to dataset folder.")
-    parser.add_argument(
-        "--vit_last_layers_checkpoint",
-        type=str,
-        default="/workspace/shared/target_dir/lr_0_001/model_lr_0_001_epoch_9.pth",
-        help="Where to search for reference branch layers",
-    )
 
     # input params that are varied
     parser.add_argument(
@@ -509,13 +493,8 @@ def main():
     parser.add_argument("--loss_w_2", default=1.0, type=float)
     parser.add_argument("--loss_w_f", default=0.1, type=float)
     parser.add_argument("--loss_w_l", default=0.1, type=float)
-    parser.add_argument("--loss_w_affine", default=1.0, type=float)
+    parser.add_argument("--loss_w_affine", default=0.1, type=float)
     parser.add_argument("--loss_detach_reference", action="store_true")
-    parser.add_argument(
-        "--loss_affine_reg_type",
-        choices=["orthogonal", "identity"],
-        default="orthogonal",
-    )
 
     # less important hyperparameters that are kept fixed
     parser.add_argument("--beta1", default=0.9, type=float, help="Beta1 for AdamW.")
