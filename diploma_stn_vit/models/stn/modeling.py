@@ -2,6 +2,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 
+
 def get_output_shape(input_shape, model):
     was_training = model.training
     model.eval()
@@ -36,9 +37,9 @@ class Localization2d(nn.Module):
     def forward(self, x):
         batch_size = x.shape[0]
         x = self.model(x)
+        # flatten output
         x = x.reshape(batch_size, -1)
 
         delta_a = self.affine_param(x)
 
         return delta_a
-    

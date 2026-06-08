@@ -19,8 +19,7 @@ def rotate_batch(images: torch.Tensor, degrees: torch.Tensor) -> torch.Tensor:
 
     if images.shape[0] != degrees.shape[0]:
         raise ValueError(
-            f"Batch size mismatch: images.shape[0]={images.shape[0]}, "
-            f"degrees.shape[0]={degrees.shape[0]}"
+            f"Batch size mismatch: images.shape[0]={images.shape[0]}, " f"degrees.shape[0]={degrees.shape[0]}"
         )
 
     batch_size = images.shape[0]
@@ -38,6 +37,7 @@ def rotate_batch(images: torch.Tensor, degrees: torch.Tensor) -> torch.Tensor:
 
     grid = F.affine_grid(theta, images.size(), align_corners=False)
 
+    # обратное преобразование
     return F.grid_sample(
         images,
         grid,
@@ -285,7 +285,7 @@ class SpatialTransformerViT(nn.Module):
             padding_mode="zeros",
             align_corners=False,
         )
-    
+
     def build_affine_theta(self, delta_a):
         """
         delta_a: [B, 4]
