@@ -68,9 +68,15 @@ def load_vit(args, base_vit):
 
 
 def load_stn_vit_checkpoint(args, stn_vit):
+    lr_str = get_lr_str(args.learning_rate)
+    stn_vit_checkpoint = (
+        Path(args.target_dir)
+        / args.target_subdir
+        / f"stn_vit_{lr_str}_epoch_{args.epoch_num}.pth"
+    )
     logger.info("***** Loading STN checkpoint *****")
-    logger.info(f"STN-ViT checkpoint path:         {args.stn_vit_checkpoint}")
-    checkpoint = torch.load(args.stn_vit_checkpoint, map_location="cpu", weights_only=False)
+    logger.info(f"STN-ViT checkpoint path:         {stn_vit_checkpoint}")
+    checkpoint = torch.load(stn_vit_checkpoint, map_location="cpu", weights_only=False)
     state_dict = checkpoint["model_state_dict"]
 
     stn_vit.last_layers.load_state_dict(state_dict["last_layers"])
@@ -162,13 +168,6 @@ def main():
         help="Where to search for common ViT layers.",
     )
     parser.add_argument(
-        "--stn_vit_checkpoint",
-        type=str,
-        default=None,
-        required=True,
-        help="Path to checkpoint with weights for two branches to resume training.",
-    )
-    parser.add_argument(
         "--target_subdir",
         type=str,
         required=True,
@@ -231,7 +230,7 @@ def main():
 
     set_seed(args)
 
-    base_vit = VisionTransformer(CONFIGS[args.model_type], args.img_size, zero_head=True, num_classes=1000)
+    base_vit = VisionTransformer(CONFIGS[args.model_type], img_size=args.img_size, zero_head=True, num_classes=1000)
 
     # load common layers
     load_vit(args, base_vit)
