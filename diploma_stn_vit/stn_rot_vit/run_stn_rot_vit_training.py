@@ -26,6 +26,49 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 
+class AngleFileLogger:
+    def __init__(self, path, append=False):
+        self.path = Path(path)
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+
+        file_exists = self.path.exists()
+        mode = "a" if append else "w"
+        self.file = self.path.open(mode, encoding="utf-8", buffering=1024 * 1024)
+
+        if not append or not file_exists or self.path.stat().st_size == 0:
+            self.file.write(
+                "epoch,phase,sample_index,input_angle_degrees," "predicted_angle_degrees,absolute_error_degrees\n"
+            )
+
+        self.sample_indices = {}
+
+    def start_epoch(self):
+        self.sample_indices = {"train": 0, "validation": 0}
+
+    def log(self, epoch, phase, input_angles, predicted_angles):
+        input_angles = input_angles.detach().float().cpu().reshape(-1).tolist()
+        predicted_angles = predicted_angles.detach().float().cpu().reshape(-1).tolist()
+
+        if len(input_angles) != len(predicted_angles):
+            raise ValueError(
+                "Input and predicted angle counts must match, " f"got {len(input_angles)} and {len(predicted_angles)}"
+            )
+
+        start_index = self.sample_indices.get(phase, 0)
+        self.file.writelines(
+            f"{epoch},{phase},{start_index + index},{input_angle:.6f},"
+            f"{predicted_angle:.6f},{abs(predicted_angle - input_angle):.6f}\n"
+            for index, (input_angle, predicted_angle) in enumerate(zip(input_angles, predicted_angles))
+        )
+        self.sample_indices[phase] = start_index + len(input_angles)
+
+    def flush(self):
+        self.file.flush()
+
+    def close(self):
+        self.file.close()
+
+
 class AverageMeter(object):
     """Computes and stores the average and current value"""
 
@@ -114,7 +157,9 @@ def setup(args):
 
     freeze_stn_vit_common_layers(stn_vit)
     stn_vit.to(args.device)
-    logger.info(f"Total STN-ViT parameters:             {sum(p.numel() for p in stn_vit.parameters()) / 1_000_000:.1f}M")
+    logger.info(
+        f"Total STN-ViT parameters:             {sum(p.numel() for p in stn_vit.parameters()) / 1_000_000:.1f}M"
+    )
     logger.info(
         f"Trainable STN-ViT parameters:         {sum(p.numel() for p in stn_vit.parameters() if p.requires_grad) / 1_000_000:.1f}M"
     )
@@ -175,7 +220,7 @@ def load_stn_vit_train_state(args, optimizer, scheduler):
     return start_epoch, best_acc, best_epoch
 
 
-def valid(args, model, val_loader, opt_step, scheduler):
+def valid(args, model, val_loader, opt_step, scheduler, epoch, angle_file_logger):
     eval_losses = AverageMeter()
 
     logger.info(f"***** Running validation after optimization step {opt_step} *****")
@@ -184,6 +229,7 @@ def valid(args, model, val_loader, opt_step, scheduler):
 
     model.eval()
     all_preds, all_labels, all_logits = [], [], []
+    all_input_angles, all_predicted_angles = [], []
 
     epoch_iterator = tqdm(
         val_loader,
@@ -196,37 +242,51 @@ def valid(args, model, val_loader, opt_step, scheduler):
     loss_fct = torch.nn.CrossEntropyLoss()
     for _, batch in enumerate(epoch_iterator):
         batch = tuple(t.to(args.device) for t in batch)
-        x, y = batch
+        x, y, input_angles = batch
 
         with torch.no_grad():
             with autocast("cuda", enabled=args.fp16 and args.device.type == "cuda"):
-                logits, _, _ = model(x)
+                logits, _, _, predicted_angles = model(x)
                 eval_loss = loss_fct(logits, y)
 
             eval_losses.update(eval_loss.item(), n=x.shape[0])
             preds = torch.argmax(logits, dim=-1)
+            angle_file_logger.log(
+                epoch=epoch,
+                phase="validation",
+                input_angles=input_angles,
+                predicted_angles=predicted_angles,
+            )
 
         all_logits.append(logits.detach().cpu().numpy())
         all_preds.append(preds.detach().cpu().numpy())
         all_labels.append(y.detach().cpu().numpy())
+        all_input_angles.append(input_angles.detach().cpu().numpy())
+        all_predicted_angles.append(predicted_angles.detach().cpu().numpy())
 
         epoch_iterator.set_description(f"Validating... (loss={eval_losses.val:.5f})")
 
     all_logits = np.concatenate(all_logits, axis=0)
     all_preds = np.concatenate(all_preds, axis=0)
     all_labels = np.concatenate(all_labels, axis=0)
+    all_input_angles = np.concatenate(all_input_angles, axis=0)
+    all_predicted_angles = np.concatenate(all_predicted_angles, axis=0)
 
     accuracy = simple_accuracy(all_preds, all_labels)
+    angle_mae = np.mean(np.abs(all_predicted_angles - all_input_angles))
 
     logger.info("\n")
     logger.info("***** Validation Results *****")
     logger.info(f"Valid Loss:                           {eval_losses.avg:.5f}")
     logger.info(f"Valid Accuracy:                       {accuracy:.5f}")
+    logger.info(f"Input rotation angle mean:            {all_input_angles.mean():.3f} deg")
+    logger.info(f"Predicted STN angle mean:             {all_predicted_angles.mean():.3f} deg")
+    logger.info(f"STN angle MAE:                        {angle_mae:.3f} deg")
 
-    return accuracy, all_logits, all_labels
+    return accuracy, all_logits, all_labels, all_input_angles, all_predicted_angles
 
 
-def save_val_data(args, epoch, logits, labels):
+def save_val_data(args, epoch, logits, labels, input_angles, predicted_angles):
     logger.info("***** Start saving val data *****")
     lr_str = get_lr_str(args.learning_rate)
     val_data_path = Path(args.target_dir) / args.target_subdir / f"val_data_lr_{lr_str}_epoch_{epoch}.npz"
@@ -235,6 +295,8 @@ def save_val_data(args, epoch, logits, labels):
         val_data_path,
         logits=logits.astype(np.float16),
         labels=labels.astype(np.int16),
+        input_angles=input_angles.astype(np.float16),
+        predicted_angles=predicted_angles.astype(np.float16),
     )
 
     metrics_size_mb = val_data_path.stat().st_size / (1024**2)
@@ -264,7 +326,9 @@ def train(args, model):
     logger.info(f"Weight decay type:                    {args.decay_type}")
     logger.info(f"WD:                                   {args.weight_decay}")
     logger.info(f"Image size:                           {args.img_size}")
+    logger.info(f"Angle log path:                       {args.angle_log_path}")
 
+    args.return_rotation_angles = True
     train_loader, val_loader = get_loader(args)
     logger.info(f"Train images:                         {len(train_loader.dataset)}")  # last batch is dropped
     logger.info(f"Validation images:                    {len(val_loader.dataset)}")
@@ -313,6 +377,10 @@ def train(args, model):
     logger.info("\n")
 
     scaler = GradScaler("cuda", enabled=args.fp16 and args.device.type == "cuda")
+    angle_file_logger = AngleFileLogger(
+        path=args.angle_log_path,
+        append=bool(args.stn_vit_checkpoint),
+    )
 
     # Train!
     logger.info(f"***** Running training *****")
@@ -337,11 +405,15 @@ def train(args, model):
     features_l1_losses = AverageMeter()
     logits_l1_losses = AverageMeter()
     affine_l2_losses = AverageMeter()
+    input_angle_means = AverageMeter()
+    predicted_angle_means = AverageMeter()
+    angle_maes = AverageMeter()
 
     for epoch in range(start_epoch, args.epoch_num + 1):
         logger.info(f"***** Epoch [{epoch} / {args.epoch_num}] started *****")
         epoch_start_time = time.time()
         model.train()
+        angle_file_logger.start_epoch()
 
         epoch_iterator = tqdm(
             train_loader,
@@ -352,7 +424,13 @@ def train(args, model):
             batch = tuple(t.to(args.device) for t in batch)
             x, y = batch
             with autocast("cuda", enabled=args.fp16 and args.device.type == "cuda"):
-                logits_per_branch, features_per_branch, theta_per_branch = model(x)
+                (
+                    logits_per_branch,
+                    features_per_branch,
+                    theta_per_branch,
+                    input_angles_per_branch,
+                    predicted_angles_per_branch,
+                ) = model(x)
                 loss, loss_dict = loss_fct(
                     logits_per_branch=logits_per_branch,
                     features_per_branch=features_per_branch,
@@ -360,6 +438,21 @@ def train(args, model):
                     targets=y,
                 )
                 loss /= args.gradient_accumulation_steps
+
+            input_angles = input_angles_per_branch[0].detach()
+            predicted_angles = predicted_angles_per_branch[0].detach()
+            angle_file_logger.log(
+                epoch=epoch,
+                phase="train",
+                input_angles=input_angles,
+                predicted_angles=predicted_angles,
+            )
+            input_angle_means.update(input_angles.mean().item(), n=x.shape[0])
+            predicted_angle_means.update(predicted_angles.mean().item(), n=x.shape[0])
+            angle_maes.update(
+                torch.mean(torch.abs(predicted_angles - input_angles)).item(),
+                n=x.shape[0],
+            )
 
             if args.fp16:
                 scaler.scale(loss).backward()
@@ -396,20 +489,35 @@ def train(args, model):
                     f"ce2={ce_2_losses.val:.5f}, "
                     f"feat={features_l1_losses.val:.5f}, "
                     f"logits={logits_l1_losses.val:.5f}, "
-                    f"aff={affine_l2_losses.val:.5f})"
+                    f"aff={affine_l2_losses.val:.5f}, "
+                    f"angle={input_angle_means.val:.2f}°, "
+                    f"pred={predicted_angle_means.val:.2f}°, "
+                    f"mae={angle_maes.val:.2f}°)"
                 )
 
             elif is_last_batch:
                 optimizer.zero_grad(set_to_none=True)
 
-        accuracy, logits, labels = valid(args, model, val_loader, opt_step, scheduler)
+        logger.info(f"Train input rotation angle mean:      {input_angle_means.avg:.3f} deg")
+        logger.info(f"Train predicted STN angle mean:       {predicted_angle_means.avg:.3f} deg")
+        logger.info(f"Train STN angle MAE:                  {angle_maes.avg:.3f} deg")
+
+        accuracy, logits, labels, input_angles, predicted_angles = valid(
+            args,
+            model,
+            val_loader,
+            opt_step,
+            scheduler,
+            epoch,
+            angle_file_logger,
+        )
         if accuracy > best_acc:
             logger.info(f"New best accuracy:                    {best_acc:.5f} -> {accuracy:.5f}")
             logger.info(f"New best epoch:                       {best_epoch} -> {epoch}")
             best_acc = accuracy
             best_epoch = epoch
         save_model(args, model, epoch, best_epoch, optimizer, scheduler, best_acc)
-        save_val_data(args, epoch, logits, labels)
+        save_val_data(args, epoch, logits, labels, input_angles, predicted_angles)
 
         model.train()
 
@@ -425,7 +533,12 @@ def train(args, model):
         features_l1_losses.reset()
         logits_l1_losses.reset()
         affine_l2_losses.reset()
+        input_angle_means.reset()
+        predicted_angle_means.reset()
+        angle_maes.reset()
+        angle_file_logger.flush()
 
+    angle_file_logger.close()
     logger.info(f"Best Accuracy:                        {best_acc:.5f}")
     logger.info(f"Best epoch:                           {best_epoch}")
     logger.info("***** End training! *****")
@@ -457,6 +570,12 @@ def main():
         help="Subdirectory name for checkpoints, logs, validation data, etc.",
     )
     parser.add_argument(
+        "--angle_log_path",
+        type=str,
+        required=True,
+        help="Path to a CSV file containing input and STN-predicted angles for every epoch.",
+    )
+    parser.add_argument(
         "--stn_vit_checkpoint",
         type=str,
         default=None,
@@ -479,7 +598,7 @@ def main():
     )
     parser.add_argument("--eval_batch_size", default=2048, type=int, help="Total batch size for eval.")
     parser.add_argument("--epoch_num", default=10, type=int, help="Total number of epochs to train the model.")
-    parser.add_argument("--learning_rate", default=0.0001, type=float, help="The initial learning rate for AdamW.")
+    parser.add_argument("--learning_rate", default=0.001, type=float, help="The initial learning rate for AdamW.")
     parser.add_argument("--weight_decay", default=0.1, type=float, help="Weight decay for AdamW.")
     parser.add_argument(
         "--decay_type", choices=["cosine", "linear"], default="cosine", help="How to decay the learning rate."

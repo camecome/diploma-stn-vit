@@ -93,6 +93,7 @@ def valid(args, model, val_loader):
 
     model.eval()
     all_preds, all_labels, all_logits = [], [], []
+    all_input_angles, all_predicted_angles = [], []
 
     epoch_iterator = tqdm(
         val_loader,
@@ -105,11 +106,11 @@ def valid(args, model, val_loader):
     loss_fct = torch.nn.CrossEntropyLoss()
     for _, batch in enumerate(epoch_iterator):
         batch = tuple(t.to(args.device) for t in batch)
-        x, y = batch
+        x, y, input_angles = batch
 
         with torch.no_grad():
             with autocast("cuda", enabled=args.fp16 and args.device.type == "cuda"):
-                logits, _, _ = model(x)
+                logits, _, _, predicted_angles = model(x)
                 eval_loss = loss_fct(logits, y)
 
             eval_losses.update(eval_loss.item(), n=x.shape[0])
@@ -118,24 +119,32 @@ def valid(args, model, val_loader):
         all_logits.append(logits.detach().cpu().numpy())
         all_preds.append(preds.detach().cpu().numpy())
         all_labels.append(y.detach().cpu().numpy())
+        all_input_angles.append(input_angles.detach().cpu().numpy())
+        all_predicted_angles.append(predicted_angles.detach().cpu().numpy())
 
         epoch_iterator.set_description(f"Testing... (loss={eval_losses.val:.5f})")
 
     all_logits = np.concatenate(all_logits, axis=0)
     all_preds = np.concatenate(all_preds, axis=0)
     all_labels = np.concatenate(all_labels, axis=0)
+    all_input_angles = np.concatenate(all_input_angles, axis=0)
+    all_predicted_angles = np.concatenate(all_predicted_angles, axis=0)
 
     accuracy = simple_accuracy(all_preds, all_labels)
+    angle_mae = np.mean(np.abs(all_predicted_angles - all_input_angles))
 
     logger.info("\n")
     logger.info("***** Testing Results *****")
     logger.info(f"Test loss:                       {eval_losses.avg:.5f}")
     logger.info(f"Test accuracy:                 {accuracy:.5f}")
+    logger.info(f"Input rotation angle mean:     {all_input_angles.mean():.3f} deg")
+    logger.info(f"Predicted STN angle mean:      {all_predicted_angles.mean():.3f} deg")
+    logger.info(f"STN angle MAE:                 {angle_mae:.3f} deg")
 
-    return accuracy, all_logits, all_labels
+    return accuracy, all_logits, all_labels, all_input_angles, all_predicted_angles
 
 
-def save_test_data(args, logits, labels):
+def save_test_data(args, logits, labels, input_angles, predicted_angles):
     logger.info("***** Start saving test data *****")
 
     lr_str = get_lr_str(args.learning_rate)
@@ -149,6 +158,8 @@ def save_test_data(args, logits, labels):
         test_data_path,
         logits=logits.astype(np.float16),
         labels=labels.astype(np.int16),
+        input_angles=input_angles.astype(np.float16),
+        predicted_angles=predicted_angles.astype(np.float16),
     )
 
     logger.info(f"Saved test data:           {test_data_path}")
@@ -243,13 +254,14 @@ def main():
     logger.info(f"Out features:                    {stn_vit.heads[-1].out_features}")
     logger.info(f"Output directory:                {Path(args.target_dir) / args.target_subdir}")
 
+    args.return_rotation_angles = True
     _, val_loader = get_loader(args)
 
     logger.info(f"Validation images:               {len(val_loader.dataset)}")
 
-    _, logits, labels = valid(args, stn_vit, val_loader)
+    _, logits, labels, input_angles, predicted_angles = valid(args, stn_vit, val_loader)
 
-    save_test_data(args, logits, labels)
+    save_test_data(args, logits, labels, input_angles, predicted_angles)
 
 
 if __name__ == "__main__":

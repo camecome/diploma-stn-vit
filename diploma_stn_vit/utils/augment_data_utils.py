@@ -20,10 +20,11 @@ logger = logging.getLogger(__name__)
 
 
 class FixedRotationDataset(Dataset):
-    def __init__(self, dataset, angles, img_size, max_rotation_degrees):
+    def __init__(self, dataset, angles, img_size, max_rotation_degrees, return_rotation_angle=False):
         self.dataset = dataset
         self.angles = angles
         self.img_size = img_size
+        self.return_rotation_angle = return_rotation_angle
 
         self.safe_size = get_safe_rotation_size(img_size, max_rotation_degrees)
 
@@ -48,6 +49,10 @@ class FixedRotationDataset(Dataset):
         img = F.rotate(img, angle=self.angles[idx])
         img = F.center_crop(img, [self.img_size, self.img_size])
         img = self.to_tensor_and_normalize(img)
+
+        if self.return_rotation_angle:
+            angle = torch.tensor(self.angles[idx], dtype=torch.float32)
+            return img, target, angle
 
         return img, target
 
@@ -93,6 +98,7 @@ def get_loader(args):
         angles=test_angles,
         img_size=args.img_size,
         max_rotation_degrees=args.max_rotation_degrees,
+        return_rotation_angle=getattr(args, "return_rotation_angles", False),
     )
 
     train_sampler = RandomSampler(trainset)

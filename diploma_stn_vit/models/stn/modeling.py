@@ -24,10 +24,11 @@ class Localization2d(nn.Module):
         self.init_model(input_shape, conv_channels)
         out_shape = get_output_shape(input_shape, self.model)
 
-        # предсказываем только 4 параметра delta A
-        expected_out_features = 4
+        # предсказываем одно число: tan(theta)
+        expected_out_features = 1
         self.affine_param = nn.Linear(int(np.prod(out_shape)), expected_out_features)
 
+        # на старте tan(theta) = 0 => theta = 0 => Rot = I
         self.affine_param.weight.data.zero_()
         self.affine_param.bias.data.zero_()
 

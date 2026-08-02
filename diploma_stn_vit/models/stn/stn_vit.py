@@ -64,7 +64,10 @@ def rotate_images_without_black_borders(images, max_angle):
     rotated_images = rotate_batch(resized_images, degrees)
     cropped_images = TF.center_crop(rotated_images, output_size=[original_size, original_size])
 
-    return cropped_images
+    # affine_grid задаёт обратное отображение координат, поэтому видимый поворот
+    # изображения имеет знак, противоположный углу в affine-матрице.
+    input_rotation_degrees = -degrees
+    return cropped_images, input_rotation_degrees
 
 
 def get_features_logits(layer, norm, head, hidden_states):
@@ -84,16 +87,21 @@ def get_features_logits(layer, norm, head, hidden_states):
 
 
 def make_training_batch(images, max_rotation_degrees, num_rotations):
-    rotated_images = [
-        rotate_images_without_black_borders(
+    rotated_images = []
+    input_rotation_degrees = []
+    for _ in range(num_rotations):
+        rotated_batch, rotation_degrees = rotate_images_without_black_borders(
             images=images,
             max_angle=max_rotation_degrees,
         )
-        for _ in range(num_rotations)
-    ]
+        rotated_images.append(rotated_batch)
+        input_rotation_degrees.append(rotation_degrees)
 
     # [self.num_branches * batch_size, C, H, W]
-    return torch.cat([images, *rotated_images], dim=0)
+    training_batch = torch.cat([images, *rotated_images], dim=0)
+    # [num_rotations, batch_size]
+    input_rotation_degrees = torch.stack(input_rotation_degrees, dim=0)
+    return training_batch, input_rotation_degrees
 
 
 class SpatialTransformerViT(nn.Module):
@@ -127,7 +135,7 @@ class SpatialTransformerViT(nn.Module):
 
         self.heads = nn.ModuleList([copy.deepcopy(base_vit.head) for _ in range(self.num_branches)])
 
-        # на выходе 4 параметра
+        # localization network предсказывает tan угла поворота
         self.loc_net = ViTLocalization(
             input_shape=[768, 14, 14],
             conv_channels=conv_channels,
@@ -135,8 +143,7 @@ class SpatialTransformerViT(nn.Module):
 
     def forward(self, images):
         if self.training:
-            # logits_per_branch                    features_per_branch
-            # [self.num_branches, batch_size, 1k], [self.num_branches, batch_size, 197, 768], [batch_size, 4]
+            # logits, features, affine matrices, input rotation angles
             return self.forward_train(images)
 
         # [batch_size, 1k], [batch_size, 197, 768]
@@ -146,13 +153,18 @@ class SpatialTransformerViT(nn.Module):
         batch_size = images.shape[0]
 
         # images [self.num_branches * batch_size, C, H, W]
-        images = make_training_batch(images, self.max_rotation_degrees, self.num_rotations)
+        images, input_rotation_degrees = make_training_batch(
+            images,
+            self.max_rotation_degrees,
+            self.num_rotations,
+        )
         # hidden_states [self.num_branches * batch_size, 197, 768]
         hidden_states = self.forward_common_layers(images)
 
         logits_per_branch = []
         features_per_branch = []
         theta_per_branch = []
+        predicted_angles_per_branch = []
 
         for branch_idx in range(self.num_branches):
             start = branch_idx * batch_size
@@ -160,10 +172,14 @@ class SpatialTransformerViT(nn.Module):
             # branch_hidden_states [batch_size, 197, 768]
             branch_hidden_states = hidden_states[start:end]
             a = None
+            predicted_angles = None
 
             if branch_idx > self.REFERENCE_BRANCH:
                 # a [batch_size, 2, 2]
-                branch_hidden_states, a = self.transform_patch_tokens(branch_hidden_states, return_theta=True)
+                branch_hidden_states, a, predicted_angles = self.transform_patch_tokens(
+                    branch_hidden_states,
+                    return_theta=True,
+                )
 
             logits, features = get_features_logits(
                 layer=self.last_layers[branch_idx],
@@ -179,6 +195,7 @@ class SpatialTransformerViT(nn.Module):
 
             if a is not None:
                 theta_per_branch.append(a)
+                predicted_angles_per_branch.append(predicted_angles)
 
         # [self.num_branches, batch_size, 1k]
         logits_per_branch = torch.stack(logits_per_branch, dim=0)
@@ -186,8 +203,16 @@ class SpatialTransformerViT(nn.Module):
         features_per_branch = torch.stack(features_per_branch, dim=0)
         # [batch_size, 2, 2]
         theta_per_branch = torch.stack(theta_per_branch, dim=0)
+        # [num_rotations, batch_size]
+        predicted_angles_per_branch = torch.stack(predicted_angles_per_branch, dim=0)
 
-        return logits_per_branch, features_per_branch, theta_per_branch
+        return (
+            logits_per_branch,
+            features_per_branch,
+            theta_per_branch,
+            input_rotation_degrees,
+            predicted_angles_per_branch,
+        )
 
     def forward_eval(self, images, return_theta=False):
         if not self.use_stn:
@@ -197,7 +222,10 @@ class SpatialTransformerViT(nn.Module):
 
         # rotate hidden states
         # [batch_size, 197, 768]
-        hidden_states, theta = self.transform_patch_tokens(hidden_states, return_theta=return_theta)
+        hidden_states, theta, predicted_angles = self.transform_patch_tokens(
+            hidden_states,
+            return_theta=return_theta,
+        )
 
         logits, features = get_features_logits(
             layer=self.last_layers[self.STN_BRANCH],
@@ -206,8 +234,8 @@ class SpatialTransformerViT(nn.Module):
             hidden_states=hidden_states,
         )
 
-        # [batch_size, 1k], [batch_size, 197, 768], [batch_size, 6]
-        return logits, features, theta
+        # [batch_size, 1k], [batch_size, 197, 768], [batch_size, 2, 2]
+        return logits, features, theta, predicted_angles
 
     def forward_common_layers(self, images):
         hidden_states = self.common_embeddings(images)
@@ -220,7 +248,7 @@ class SpatialTransformerViT(nn.Module):
     def transform_patch_tokens(self, hidden_states_batch, return_theta=False):
         if not self.use_stn:
             if return_theta:
-                return hidden_states_batch, None
+                return hidden_states_batch, None, None
             return hidden_states_batch
 
         # cls_token [batch_size, 1, 768]
@@ -232,11 +260,11 @@ class SpatialTransformerViT(nn.Module):
         # patch_feature_map [batch_size, 768, 14, 14]
         patch_feature_map = self.tokens_to_feature_map(patch_tokens)
 
-        # delta_a [batch_size, 4]
-        delta_a = self.loc_net(patch_feature_map)
+        # tan_theta [batch_size, 1]
+        tan_theta = self.loc_net(patch_feature_map)
 
         # theta [batch_size, 2, 3], a [batch_size, 2, 2]
-        theta, a = self.build_affine_theta(delta_a)
+        theta, a, predicted_angles = self.build_affine_theta(tan_theta)
 
         # transformed_patch_feature_map [batch_size, 768, 14, 14]
         transformed_patch_feature_map = self.apply_stn(patch_feature_map, theta)
@@ -248,7 +276,7 @@ class SpatialTransformerViT(nn.Module):
         transformed_hidden_states = torch.cat([cls_token, transformed_patch_tokens], dim=1)
 
         if return_theta:
-            return transformed_hidden_states, a
+            return transformed_hidden_states, a, predicted_angles
 
         return transformed_hidden_states
 
@@ -286,37 +314,52 @@ class SpatialTransformerViT(nn.Module):
             align_corners=False,
         )
 
-    def build_affine_theta(self, delta_a):
+    def build_affine_theta(self, tan_theta):
         """
-        delta_a: [B, 4]
+        tan_theta: [B, 1]
 
         Возвращает:
-            theta: [B, 2, 3] — полная affine-матрица для affine_grid
-            a:     [B, 2, 2] — левая квадратная подматрица A для regularization loss
+            theta: [B, 2, 3] — affine-матрица для affine_grid
+            a:     [B, 2, 2] — левая квадратная подматрица A = R(theta)
+            predicted_angles: [B] — предсказанный угол в градусах
         """
-        batch_size = delta_a.shape[0]
+        if tan_theta.ndim != 2 or tan_theta.shape[1] != 1:
+            raise ValueError(f"Expected tan_theta with shape [B, 1], got {tan_theta.shape}")
 
-        delta_a = delta_a.reshape(batch_size, 2, 2)
+        batch_size = tan_theta.shape[0]
 
-        identity = torch.eye(
+        # angle [B, 1]
+        # torch.atan(tan_theta)
+        angle = torch.atan2(tan_theta, torch.ones_like(tan_theta))
+        predicted_angles = torch.rad2deg(angle.squeeze(1))
+
+        cos = torch.cos(angle)
+        sin = torch.sin(angle)
+
+        # a: [B, 2, 2]
+        a = torch.zeros(
+            batch_size,
             2,
-            device=delta_a.device,
-            dtype=delta_a.dtype,
-        ).unsqueeze(0)
+            2,
+            device=tan_theta.device,
+            dtype=tan_theta.dtype,
+        )
 
-        # A = I + delta A
-        a = identity + delta_a
+        a[:, 0, 0] = cos.squeeze(1)
+        a[:, 0, 1] = -sin.squeeze(1)
+        a[:, 1, 0] = sin.squeeze(1)
+        a[:, 1, 1] = cos.squeeze(1)
 
-        # фиксированный нулевой сдвиг
+        # нулевой сдвиг: [B, 2, 1]
         zeros = torch.zeros(
             batch_size,
             2,
             1,
-            device=delta_a.device,
-            dtype=delta_a.dtype,
+            device=tan_theta.device,
+            dtype=tan_theta.dtype,
         )
 
-        # theta = [A | 0], shape [B, 2, 3]
+        # theta = [R | 0], shape [B, 2, 3]
         theta = torch.cat([a, zeros], dim=2)
 
-        return theta, a
+        return theta, a, predicted_angles
